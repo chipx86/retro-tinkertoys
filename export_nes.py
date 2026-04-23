@@ -3162,27 +3162,21 @@ class Exporter:
 
     def get_block_name_for_addr(
         self,
-        addr,  # type: Address | str
+        addr,  # type: Address
     ):  # type: (...) -> str
-        if isinstance(addr, Address):
-            addr = addr.getAddressSpace().toString()
+        """Return the block name for an address.
 
-        parts = addr.split(':', 1)
+        Args:
+            addr (ghidra.program.model.address.Address):
+                The address.
 
-        if len(parts) == 2:
-            return parts[0]
+        Returns:
+            str:
+            The address's block name.
+        """
+        assert isinstance(addr, Address)
 
-        symbol = self.name_to_symbol.get(addr)
-
-        if symbol:
-            return (
-                symbol[0].getAddress().getAddressSpace().toString()
-                .split('::', 1)[0]
-            )
-
-        assert addr != 'PPUADDR'
-
-        return 'XXX'
+        return addr.getAddressSpace().getName()
 
     def find_symbol_for_address(
         self,
