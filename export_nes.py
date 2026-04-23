@@ -47,7 +47,7 @@ from ghidra.program.model.symbol import (
 
 if 0:
     import typing
-    from typing import Any
+    from typing import Any, Callable, Mapping
 
 
 INVALID_LABEL_NAME_RE = re.compile(r'[^A-Za-z0-9_@]')
@@ -80,9 +80,34 @@ ADDR_RE = re.compile(r'[A-Fa-f0-9]{2,4}')
 #: Each of these may trigger logic for looking up a symbol to include
 #: in place of the value.
 REF_DATA_TYPES = {
-    'byte',
+    'bank_offset_8',
+    'bank_offset_16',
+    'pointer-1',
     'pointer',
-    'ushort',
+    'pointer_l',
+    'pointer_l-1',
+    'pointer_u',
+    'pointer_u-1',
+}
+
+
+#: A mapping of Ghidra reference data types to hard-coded offsets.
+REF_DATA_TYPE_DELTAS = {
+    'pointer-1': -1,
+    'pointer_l-1': -1,
+    'pointer_u-1': -1,
+}
+
+
+#: A mapping of Ghidra reference data types to hard-coded prefixes.
+#:
+#: This is used to define Ghidra data types that indicate the upper or
+#: lower byte of a target address.
+REF_DATA_TYPE_PREFIXES = {
+    'pointer_l': '<',
+    'pointer_l-1': '<',
+    'pointer_u': '>',
+    'pointer_u-1': '>',
 }
 
 
@@ -91,7 +116,9 @@ REF_DATA_TYPES = {
 #: If a value is ``None``, the default word type will be used for the
 #: assembler target.
 WORD_DATA_TYPES = {
+    'bank_offset_16': 'bank_offset_16',
     'pointer': 'pointer',
+    'pointer-1': 'pointer',
     'short': None,
     'ushort': None,
 }
@@ -2279,30 +2306,14 @@ class BlockExporter:
             comment_prefix = ''
             default_comment_suffix = data_type_str
 
-        data_dest_name_prefix = ''
-        norm_jump_table_addr = lambda offset: offset
-
         for value_i, value in enumerate(data_values):
             labels_comments = self.export_labels_and_comments(addr, writer)
             labeled = bool(labels_comments)
 
+            # Build an EOL comment for this entry. We'll prioritize any
+            # comment already set, or any default computed above. If neither
+            # are set, a new default specific to this address may be created.
             comment_suffix = listing.getComment(CodeUnit.EOL_COMMENT, addr)
-
-            if (check_jump_tables and
-                labeled and
-                value_i == 0 and
-                labels_comments['labels'] and
-                data_type_str == 'byte'):
-                # We may need a prefix for any references.
-                label = labels_comments['labels'][0]
-
-                if label.endswith('_L'):
-                    data_dest_name_prefix = '<'
-                    norm_jump_table_addr = lambda offset: (offset & 0xFF)
-                elif label.endswith('_U'):
-                    data_dest_name_prefix = '>'
-                    norm_jump_table_addr = \
-                        lambda offset: ((offset & 0xFF00) >> 2)
 
             if comment_prefix or comment_suffix:
                 eol_comment = '%s%s' % (
@@ -2316,68 +2327,55 @@ class BlockExporter:
                 ref_str = self.get_ref_str_from_addr(addr)
 
                 if ref_str:
-                    eol_comment = '%s [$%s]' % (ref_str, addr.toString())
+                    eol_comment = '%s [$%s]' % (ref_str, addr)
 
             output_bytes = True
 
-            # Specially handle references to functions for jump tables.
+            # If this appears to be a jump table pointing to other references,
+            # then begin processing the current entry in that table.
             if check_jump_tables:
-                # If we're checking jump tables, look for any references
-                # from this address to consider using as a constant. This
-                # supports functions and symbols.
-                #
-                # Functions can be a direct reference or off by one. Other
-                # symbols must be direct reference.
-                jump_dest = self._find_data_target_ref_from(addr)
-                dest_name = None
+                # Check if the entry in the table references a target.
+                target_info = self._get_jump_table_dest_target(
+                    entry_addr=addr,
+                    entry_value=value,
+                    entry_data_type_str=data_type_str,
+                )
 
-                if 0 and 'PRG12' in addr.toString():
-                    print('%r -- %r -- %r' % (value, addr, jump_dest))
+                if target_info:
+                    # A target was referenced. Build a formatted name with
+                    # with any necessary prefixes and suffixes for that
+                    # target.
+                    offset_str = self._format_dest_offset(
+                        target_info['offset'])
+                    dest_name = '%s%s' % (
+                        self.normalize_ref(
+                            exporter.sanitize_label_name(target_info['name']),
+                            target_info['block_name']),
+                        offset_str,
+                    )
 
-                if jump_dest is not None:
-                    bytes_writer.flush()
+                    # See if there's a prefix needed for this data type in
+                    # order to reference a lower or upper byte.
+                    data_dest_name_prefix = \
+                        REF_DATA_TYPE_PREFIXES.get(data_type_str, '')
 
-                    if isinstance(jump_dest, Function):
-                        jump_dest_addr = jump_dest.getEntryPoint()
-                        jump_dest_addr_value = \
-                            jump_dest_addr.getUnsignedOffset()
-                        deltas = [0, -1]
-                    else:
-                        jump_dest_addr = jump_dest.getAddress()
-                        jump_dest_addr_value = \
-                            jump_dest_addr.getUnsignedOffset()
-                        deltas = [0]
+                    if data_dest_name_prefix:
+                        # There was a prefix. If there's an offset, wrap the
+                        # combined address + offset in parens so the prefix
+                        # will apply to that result.
+                        if offset_str:
+                            dest_name = '(%s)' % dest_name
 
-                    for delta in deltas:
-                        jump_table_offset = norm_jump_table_addr(
-                            jump_dest_addr_value + delta)
+                        # Apply the prefix.
+                        dest_name = '%s%s' % (data_dest_name_prefix,
+                                              dest_name)
 
-                        if self.block_name == 'PRG12':
-                            print(addr, jump_dest,
-                                  norm_jump_table_addr,
-                                  repr(jump_dest_addr_value + delta),
-                                  repr(jump_table_offset),
-                                  '%s == %s ?' % (jump_table_offset, value))
-
-                        if jump_table_offset == value:
-                            dest_name = exporter.sanitize_label_name(
-                                jump_dest.getName())
-
-                            dest_name = '%s%s%s' % (
-                                data_dest_name_prefix,
-                                self.normalize_ref(
-                                    dest_name,
-                                    exporter.get_block_name_for_addr(
-                                        jump_dest_addr)),
-                                delta or '',
-                            )
-                            break
-
-                if dest_name:
+                    # Write the entry for the table.
                     writer.write_code(
                         [code_op, dest_name],
                         addr=addr,
-                        eol_comment=self.process_comment(eol_comment))
+                        eol_comment=self.process_comment(eol_comment),
+                    )
 
                     output_bytes = False
 
@@ -2512,6 +2510,128 @@ class BlockExporter:
                     break
 
         return op_str, primary_symbol, primary_offset
+
+    def _get_jump_table_dest_target(
+        self,
+        entry_addr,            # type: Address
+        entry_value,           # type: int
+        entry_data_type_str,   # type: str
+    ):  # type: (...) -> Mapping[str, Any] | None
+        """Process an entry in a table, returning any resolved reference info.
+
+        This will look at the provided entry in the table, making various
+        checks to see if there's a target symbol and destination address
+        referenced by the entry. That reference may be defined in Ghidra
+        explicitly or it may be defined based on the data type.
+
+        Args:
+            entry_addr (ghidra.program.model.address.Address):
+                The address of the entry.
+
+            entry_value (int):
+                The entry value.
+
+            entry_data_type_str (str):
+                The data type of the entry.
+
+        Returns:
+            dict:
+            A dictionary containing:
+
+            Keys:
+                addr (ghidra.program.model.address.Address):
+                    The target address.
+
+                block_name (str):
+                    The target block name.
+
+                offset (int):
+                    The target offset within the address.
+
+                name (str):
+                    The target name.
+        """
+        exporter = self.exporter
+        refs = exporter.ref_manager.getReferencesFrom(entry_addr)
+
+        if refs:
+            # Ghidra has known references from this entry's address. Locate
+            # any symbol and offset for that reference, returning the result
+            # if everything is found.
+            ref = refs[0]
+            dest_addr, dest_offset = \
+                self.get_defined_ref_and_offset(ref)
+            dest_symbol = exporter.find_symbol_for_address(dest_addr)
+
+            if dest_symbol:
+                dest_block_name, dest_symbol_name = dest_symbol
+                dest_addr = dest_symbol
+
+                if dest_offset is None:
+                    dest_offset = self._get_offset_for_data_type(
+                        entry_data_type_str)
+
+                    return {
+                        'addr': dest_addr,
+                        'block_name': dest_block_name,
+                        'name': dest_symbol_name,
+                        'offset': dest_offset,
+                    }
+        else:
+            # Look for any references from this address using our own
+            # methods. This will look for any functions or general symbols.
+            #
+            # Functions can be a direct reference or off-by-one. Other
+            # symbols must be direct reference.
+            jump_dest = self._find_data_target_ref_from(entry_addr)
+
+            if jump_dest is not None:
+                if isinstance(jump_dest, Function):
+                    # The destination is a function. Consider both this
+                    # address and the address immediately before it.
+                    jump_dest_addr = jump_dest.getEntryPoint()
+                    deltas = [0, -1]
+                else:
+                    # The destination is any other label. Consider only that
+                    # address.
+                    jump_dest_addr = jump_dest.getAddress()
+                    deltas = [0]
+
+                jump_dest_addr_value = jump_dest_addr.getUnsignedOffset()
+
+                for delta in deltas:
+                    jump_table_offset = jump_dest_addr_value + delta
+
+                    if jump_table_offset == entry_value:
+                        return {
+                            'addr': jump_dest_addr,
+                            'block_name': exporter.get_block_name_for_addr(
+                                jump_dest_addr),
+                            'has_refs_from': True,
+                            'name': jump_dest.getName(),
+                            'offset': jump_table_offset,
+                        }
+
+        return None
+
+    def _get_offset_for_data_type(
+        self,
+        data_type_str,  # type: str
+    ):  # type: (...) -> int
+        """Return a hard-coded offset for a given data type.
+
+        This may be positive or negative, depending on the data type. For
+        most, this will be 0.
+
+        Args:
+            data_type_str (str):
+                The data type as a string.
+
+        Returns:
+            int:
+            The offset.
+        """
+        return REF_DATA_TYPE_DELTAS.get(data_type_str, 0)
 
     def _format_dest_offset(
         self,
