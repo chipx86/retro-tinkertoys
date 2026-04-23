@@ -2867,12 +2867,32 @@ class Exporter:
         self.labels_cache = {}    # type: dict[str, list[tuple[str, str]]]
         self.name_to_symbol = {}  # type: dict[str, list[Symbol]]
 
+        # Build a mapping of block names to indexes.
+        self.block_index_map = {
+            block.getName(): i
+            for i, block in enumerate(
+                sorted(
+                    (
+                        block
+                        for block in self.blocks
+                        if block.isInitialized()
+                    ),
+                    key=lambda block: (
+                        block.getStart().getAddressSpace().getUnique(),
+                        block.getStart().getOffset(),
+                        block.getName(),
+                    ),
+                ),
+            )
+        }
+
     def export(self):
         self.build_symbol_maps()
 
         filename_basepath = '/Users/chipx86/src/faxanadu'
 
         self.export_refs_index(filename_basepath)
+        self.export_mesen_labels(filename_basepath)
         self.export_defs(filename_basepath)
 
         for block in self.blocks:
@@ -2920,6 +2940,80 @@ class Exporter:
 
         with writer.open():
             block_exporter.export(writer)
+
+    def export_mesen_labels(
+        self,
+        base_path,  # type: str
+    ):  # type: (...) -> None
+        """Export a Mesen labels file.
+
+        This will generate a file for Mesen that assigns names to file offset
+        addresses, making it easy to keep Mesen and the disassembly in sync.
+
+        Args:
+            base_path (str):
+                The base path to write to.
+        """
+        mesen_path = os.path.join(base_path, 'mesen')
+
+        if not os.path.exists(mesen_path):
+            os.mkdir(mesen_path, 0o755)
+
+        symbols = self.symbol_table.getAllSymbols(True)
+        block_index_map = self.block_index_map
+        memory = self.memory
+
+        results = []  # type: list[tuple[int, str]]
+
+        # Iterate through all label and function symbols, building a list
+        # that can be sorted and written.
+        while symbols.hasNext():
+            symbol = symbols.next()
+            addr = symbol.getAddress()
+
+            if not addr:
+                continue
+
+            if symbol.getSymbolType() not in (SymbolType.LABEL,
+                                              SymbolType.FUNCTION):
+                continue
+
+            block = memory.getBlock(addr)
+
+            if block is None:
+                continue
+
+            bank_index = block_index_map.get(block.getName())
+
+            if bank_index is None:
+                continue
+
+            offset_in_block = addr.subtract(block.getStart())
+            block_size = block.getSize()
+
+            if offset_in_block < 0 or offset_in_block >= block_size:
+                continue
+
+            file_offset = bank_index * block_size + offset_in_block
+            results.append((
+                file_offset,
+                self.sanitize_label_name(symbol.getName()),
+            ))
+
+        filename = os.path.join(
+            mesen_path,
+            '%s.mlb' % self.program_name.split('.', 1)[0])
+
+        # Sort the results so they're in offset order.
+        results.sort()
+
+        # Write the result to the file.
+        with open(filename, 'w') as fp:
+            for file_offset, name in results:
+                fp.write('NesPrgRom:%04X:%s\n'
+                         % (file_offset, name))
+
+        os.chmod(filename, 0o644)
 
     def export_refs_index(
         self,
