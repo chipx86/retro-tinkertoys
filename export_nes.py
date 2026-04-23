@@ -2106,8 +2106,8 @@ class BlockExporter:
         if ref.endswith('_1'):
             ref = ref[:-2]
             suffix = '+1'
-        elif offset:
-            suffix = '+%s' % offset
+        else:
+            suffix = self._format_dest_offset(offset)
 
         if block_name is None:
             symbol = self.exporter.find_symbol_for_address(ref)
@@ -2355,6 +2355,44 @@ class BlockExporter:
                 addr = addr.addNoWrap(size)
             except Exception:
                 break
+
+    def _format_dest_offset(
+        self,
+        dest_offset,  # type: int | None
+    ):  # type: (...) -> str
+        """Return a destination address offset formatted as a string.
+
+        The formatted offset wlil be shown as a hex number if >= 16, or
+        a decimal number if < 16.
+
+        Args:
+            dest_offset (int):
+                The offset to format.
+
+        Returns:
+            str:
+            The offset string.
+        """
+        if not dest_offset:
+            return ''
+
+        if dest_offset >= 0:
+            sign = '+'
+        else:
+            sign = '-'
+
+        abs_dest_offset = abs(dest_offset)
+
+        if abs_dest_offset >= 16:
+            # The offset is 16 or more bytes away, so format it as a
+            # hex value to keep it manageable.
+            offset_str = '$%X' % abs_dest_offset
+        else:
+            # The offset is under 16 bytes away, so format as a decimal
+            # number just to simplify output.
+            offset_str = str(abs_dest_offset)
+
+        return '%s%s' % (sign, offset_str)
 
     def _find_data_target_ref_from(
         self,
