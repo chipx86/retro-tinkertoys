@@ -1304,6 +1304,22 @@ class HTMLFileWriter(FileWriter):
           min-width: 3em;
         }
 
+        .idx {
+          display: grid;
+          grid-column: 2 / 3;
+          grid-template-columns: minmax(50ch, max-content) auto;
+          gap: 0 1em;
+        }
+
+        .idx-name {
+          font-weight: bold;
+        }
+
+        .idx-targets {
+          display: flex;
+          flex-direction: row;
+        }
+
         .o {
           color: #e3e3e3;
           margin-left: 1ch;
@@ -2856,6 +2872,7 @@ class Exporter:
 
         filename_basepath = '/Users/chipx86/src/faxanadu'
 
+        self.export_refs_index(filename_basepath)
         self.export_defs(filename_basepath)
 
         for block in self.blocks:
@@ -2903,6 +2920,75 @@ class Exporter:
 
         with writer.open():
             block_exporter.export(writer)
+
+    def export_refs_index(
+        self,
+        base_path,  # type: str
+    ):  # type: (...) -> None
+        """Export a symbol references table of contents file.
+
+        This will generate a file that includes all known references,
+        linking to the target addresses for each.
+
+        References are grouped by the first prefix in an underscore-separated
+        identifier.
+
+        Args:
+            base_path (str):
+                The base path to write to.
+        """
+        program_name = self.program_name
+        writer = HTMLFileWriter(base_path=base_path,
+                                block_name='REFERENCES',
+                                program_name=program_name)
+
+        with writer.open():
+            writer.write_comment(
+                comment=(
+                    '{program}\n'
+                    '\n'
+                    'References'
+                ).format(program=program_name),
+                leading_blank=0,
+                use_plate_syntax=True,
+            )
+            writer.write_blank_line()
+
+            last_prefix = None
+
+            for name, symbols in sorted(self.name_to_symbol.items(),
+                                        key=lambda pair: pair[0]):
+                if name.startswith('_'):
+                    continue
+
+                prefix = name.split('_', 1)[0]
+
+                if last_prefix != prefix:
+                    writer.write_comment(
+                        comment=prefix,
+                        leading_blank=2,
+                        use_plate_syntax=True,
+                    )
+                    last_prefix = prefix
+
+                lines = []  # type: list[str]
+
+                for symbol in symbols:
+                    addr = symbol.getAddress()
+                    block_name = self.get_block_name_for_addr(addr)
+
+                    lines.append(
+                        '<a href="%s.html#%s">%s</a>'
+                        % (block_name, name, addr)
+                    )
+
+                writer.write_lines([
+                    '<div class="idx">'
+                    '<span class="idx-name">%s</span> '
+                    '<span class="idx-targets">%s</span>'
+                    '</div>'
+                    % (name, ''.join(lines))
+                ])
 
     def build_symbol_maps(self):  # type: (...) -> None
         addr_to_label_map = {}   # type: dict[str, list[tuple[str, str]]]
