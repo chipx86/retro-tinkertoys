@@ -2616,7 +2616,7 @@ class Exporter:
                                          use_plate_syntax=True)
 
                     writer.write_equs([
-                        (data_type.getName(value),
+                        (self.normalize_var(data_type.getName(value)),
                          '${:02x}'.format(value))
                         for value in data_type.getValues()
                     ])
@@ -2706,6 +2706,24 @@ class Exporter:
         except ValueError:
             return addr_str.lower().zfill(4)
 
+    def normalize_var(
+        self,
+        name,  # type: str
+    ):  # type: (...) -> str
+        """Return a normalized version of a variable name.
+
+        This will replace any ``.`` characters with ``_``.
+
+        Args:
+            name (str):
+                The variable name to normalize.
+
+        Returns:
+            str:
+            The normalized name.
+        """
+        return name.replace('.', '_')
+
     def get_block_name_for_addr(
         self,
         addr,  # type: Address | str
@@ -2789,10 +2807,31 @@ class Exporter:
 
         return result
 
-    def sanitize_label_name(self, name):
+    def sanitize_label_name(
+        self,
+        name,  # type: str
+    ):  # type: (...) -> str
+        """Return a sanitized label name.
+
+        This will replace any invalid characters in the label with an
+        underscore, and strip any ``[0]`` characters at the end of the label.
+
+        If the label starts with an underscore or ``LAB_``, it will be
+        prefixed with a ``@`` in order to define a relative label.
+
+        Args:
+            name (str):
+                The label name to normalize.
+
+        Returns:
+            str:
+            The normalized label name.
+        """
         assert name
 
-        label_name = INVALID_LABEL_NAME_RE.sub('_', name)
+        label_name = INVALID_LABEL_NAME_RE.sub(
+            '_',
+            name.replace('[0]', ''))
 
         if (label_name.startswith(('_', 'LAB_')) and
             not label_name.startswith('_thunk_')):
