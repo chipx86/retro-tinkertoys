@@ -2787,6 +2787,7 @@ class BlockExporter:
 
                 # Check if there's a data section managing the reference.
                 data = listing.getDataContaining(from_addr)
+                primary_symbol = None  # type: Symbol | None
 
                 if data is not None:
                     # Walk to the top of the data.
@@ -2800,29 +2801,20 @@ class BlockExporter:
                         data = parent
                         parent = data.getParent()
 
-                    symbol = symbol_table.getPrimarySymbol(data.getAddress())
+                    primary_symbol = \
+                        symbol_table.getPrimarySymbol(data.getAddress())
 
-                    if symbol is not None:
-                        xrefs.add(
-                            '%s [$%s]'
-                            % (self.normalize_ref(
-                                symbol.getName(True),
-                                exporter.get_block_name_for_addr(from_addr)),
-                               from_addr.toString())
-                        )
+                if primary_symbol is None:
+                    # Get the nearest label.
+                    primary_symbol = symbol_table.getPrimarySymbol(from_addr)
 
-                    continue
-
-                # Get the nearest label.
-                symbol = symbol_table.getPrimarySymbol(from_addr)
-
-                if symbol is not None:
+                if primary_symbol is not None:
                     xrefs.add(
                         '%s [$%s]'
                         % (self.normalize_ref(
-                            symbol.getName(True),
+                            primary_symbol.getName(True),
                             exporter.get_block_name_for_addr(from_addr)),
-                           from_addr.toString())
+                           from_addr)
                     )
 
                     continue
