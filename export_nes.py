@@ -40,7 +40,6 @@ if 0:
     from typing import Any
 
 
-
 INVALID_LABEL_NAME_RE = re.compile(r'[^A-Za-z0-9_@]')
 
 INDIRECT_MATCH = re.compile(
@@ -1970,8 +1969,6 @@ class BlockExporter:
                 if raw_instruction_bytes[0] in ABSOLUTE_ADDR_OPCODES:
                     op_str = asm_mode.ZERO_PAGE_FMT % op_str
 
-                #assert op_str != 'Area_CurrentArea', raw_instruction_bytes
-
                 operand_strings.append(op_str)
 
             code.append(mnemonic.ljust(3))
@@ -2162,7 +2159,6 @@ class BlockExporter:
 
         if is_array or isinstance(data_type, (Structure, Union)):
             count = data.getNumComponents()
-            print('***', index_path, count)
 
             for i in range(count):
                 child = data.getComponent(i)
@@ -2183,11 +2179,6 @@ class BlockExporter:
                 data_bytes = data.getBytes()
             else:
                 data_bytes = [None] * data_len
-
-            #assert data_len in (1, 2), (
-            #    'data_len = %r, byte_addr = %r, data_type = %r' % (
-            #        data_len, byte_addr, data_type,
-            #))
 
             if data_type_str in WORD_DATA_TYPES:
                 # We'll need to specially output these as shorts.
@@ -2278,14 +2269,10 @@ class BlockExporter:
                 if label.endswith('_L'):
                     data_dest_name_prefix = '<'
                     norm_jump_table_addr = lambda offset: (offset & 0xFF)
-                    print(label, 'Is <')
                 elif label.endswith('_U'):
                     data_dest_name_prefix = '>'
                     norm_jump_table_addr = \
                         lambda offset: ((offset & 0xFF00) >> 2)
-                    print(label, 'Is >')
-
-                print(data_values)
 
             if comment_prefix or comment_suffix:
                 eol_comment = '%s%s' % (
@@ -2738,7 +2725,6 @@ class Exporter:
                 .split('::', 1)[0]
             )
 
-        print(repr(addr))
         assert addr != 'PPUADDR'
 
         return 'XXX'
