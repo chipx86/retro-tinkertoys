@@ -176,7 +176,17 @@ ABSOLUTE_ADDR_OPCODES = {
 def get_addr_for_eol_comment(
     addr,  # type: Address
 ):  # type: (...) -> str
-    return '[$%s]' % addr.toString().rsplit(':', 1)[-1]
+    """Return the representation of an address for an EOL comment.
+
+    Args:
+        addr (ghidra.program.model.address.Address):
+            The address to represent.
+
+    Returns:
+        str:
+        The address representation for the comment.
+    """
+    return '[$%s]' % addr.toString(False)
 
 
 def get_data_type_str(
@@ -1444,7 +1454,7 @@ class HTMLFileWriter(FileWriter):
         else:
             anchor = (
                 '<a class="anc" name="{addr}" href="#{addr}">[{addr}]</a>'
-                .format(addr=addr.toString().split(':')[-1])
+                .format(addr=addr.toString(False))
             )
 
         return HTMLString(
@@ -1553,8 +1563,26 @@ class HTMLFileWriter(FileWriter):
         name,  # type: str
         addr,  # type: Address
     ):  # type: (...) -> str
+        """Normalize an anchor name.
+
+        If the anchor name is local (starts with ``@``), the resulting
+        name will be in the form of: ``<address>:<label>``.
+
+        Otherwise, the name will be returned as-is.
+
+        Args:
+            name (str):
+                The label name for the anchor.
+
+            addr (ghidra.program.model.address.Address):
+                The address of the anchor.
+
+        Returns:
+            str:
+            The normalized anchor name.
+        """
         if name.startswith('@'):
-            name = '%s:%s' % (addr.toString().split(':', 1)[-1], name)
+            name = '%s:%s' % (addr.toString(False), name)
 
         return name
 
@@ -1874,7 +1902,7 @@ class BlockExporter:
 
         # Write any labels.
         if pending_labels:
-            eol_comment = '[$%s]' % addr.toString().split(':')[-1]
+            eol_comment = get_addr_for_eol_comment(addr)
 
             for label in pending_labels:
                 label_name = exporter.sanitize_label_name(label)
@@ -2457,7 +2485,7 @@ class BlockExporter:
         # Build a map of normalized target addresses to reference objects,
         # based on the operands in this code unit.
         op_refs = {
-            str(_ref.getToAddress()).split('::')[-1].lower(): _ref
+            _ref.getToAddress().toString(False).lower(): _ref
             for _ref in code_unit.getOperandReferences(operand_index)
         }
 
@@ -3212,7 +3240,7 @@ class Exporter:
 
         remaining_result = []
 
-        addr_str = addr.toString().lower()
+        addr_str = str(addr).lower()
         result += self.addr_to_label.get(addr_str, [])
         result += self.addr_to_symbol.get(addr_str, [])
 
@@ -3274,7 +3302,7 @@ class Exporter:
         addr,  # type: Program
     ):  # type: (...) -> list[str]
         labels_cache = self.labels_cache
-        addr_str = addr.toString().lower()
+        addr_str = str(addr).lower()
 
         try:
             return labels_cache[addr_str]
