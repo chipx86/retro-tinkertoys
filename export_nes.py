@@ -66,6 +66,28 @@ SYMBOL_RE = re.compile(
 ADDR_RE = re.compile(r'[A-Fa-f0-9]{2,4}')
 
 
+#: A set of Ghidra reference data types.
+#:
+#: Each of these may trigger logic for looking up a symbol to include
+#: in place of the value.
+REF_DATA_TYPES = {
+    'byte',
+    'pointer',
+    'ushort',
+}
+
+
+#: A mapping of word-sized Ghidra data types to operand values to output.
+#:
+#: If a value is ``None``, the default word type will be used for the
+#: assembler target.
+WORD_DATA_TYPES = {
+    'pointer': 'pointer',
+    'short': None,
+    'ushort': None,
+}
+
+
 DISPLAYABLE_CHARS = set(
     string.ascii_letters +
     string.digits +
@@ -2167,7 +2189,7 @@ class BlockExporter:
             #        data_len, byte_addr, data_type,
             #))
 
-            if data_type_str in {'pointer', 'short', 'ushort'}:
+            if data_type_str in WORD_DATA_TYPES:
                 # We'll need to specially output these as shorts.
                 assert data_len % 2 == 0
 
@@ -2214,12 +2236,15 @@ class BlockExporter:
 
         bytes_writer = self.bytes_writer
         end_addr = self.end_addr
-        check_jump_tables = data_type_str in {'byte', 'pointer', 'ushort'}
+        check_jump_tables = data_type_str in REF_DATA_TYPES
         code_op = 'XXX'
 
         if check_jump_tables:
-            if data_type_str == 'byte':
-                code_op = asm_mode.WORD_OP
+            if data_type_str in WORD_DATA_TYPES:
+                code_op = (
+                    WORD_DATA_TYPES.get(data_type_str) or
+                    asm_mode.WORD_OP
+                )
             else:
                 code_op = asm_mode.CHAR_OP
 
