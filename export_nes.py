@@ -12,7 +12,11 @@ import textwrap
 import string
 from contextlib import contextmanager
 
-from ghidra.program.model.address import Address, AddressOutOfBoundsException
+from ghidra.program.model.address import (
+    Address,
+    AddressOutOfBoundsException,
+    GenericAddress,
+)
 from ghidra.program.model.data import (
     Array,
     DataType,
@@ -33,7 +37,13 @@ from ghidra.program.model.listing import (
     Program,
 )
 from ghidra.program.model.scalar import Scalar
-from ghidra.program.model.symbol import SymbolType, Symbol, RefType
+from ghidra.program.model.symbol import (
+    OffsetReference,
+    RefType,
+    Reference,
+    Symbol,
+    SymbolType,
+)
 
 if 0:
     import typing
@@ -1917,9 +1927,14 @@ class BlockExporter:
             ]
         else:
             for i in range(code_unit.getNumOperands()):
-                op_str = None
-                default_op_rep = code_unit.getDefaultOperandRepresentation(i)
+                op_str, primary_symbol, primary_offset = \
+                    self._get_operand_info(
+                        code_unit=code_unit,
+                        operand_index=i,
+                        mnemonic=mnemonic,
+                    )
 
+                default_op_rep = code_unit.getDefaultOperandRepresentation(i)
                 norm_default_op_rep = default_op_rep.upper()
 
                 if norm_default_op_rep.endswith(',X'):
@@ -1929,31 +1944,14 @@ class BlockExporter:
                 else:
                     index_suffix = ''
 
-                primary_symbol = None
-
-                for obj in code_unit.getOpObjects(i):
-                    if isinstance(obj, Address):
-                        symbol = exporter.find_symbol_for_address(obj)
-
-                        if symbol:
-                            primary_symbol = symbol
-                            break
-                    elif isinstance(obj, Scalar):
-                        if default_op_rep.startswith('#'):
-                            scalar_value = obj.getValue()
-
-                            if (abs(scalar_value) <= 0xFF and
-                                not mnemonic.startswith('j')):
-                                op_str = asm_mode.format_op_byte(scalar_value)
-                            else:
-                                op_str = asm_mode.format_op_word(scalar_value)
-
-                            break
-
+                # If we found a symbol from the above, normalize it and
+                # update any operands.
                 if primary_symbol:
                     symbol_ref = self.normalize_ref(
                         exporter.sanitize_label_name(primary_symbol[1]),
-                        primary_symbol[0])
+                        primary_symbol[0],
+                        offset=primary_offset,
+                    )
 
                     if (norm_default_op_rep.startswith('(') and
                         norm_default_op_rep.endswith(',X)')):
@@ -2016,6 +2014,37 @@ class BlockExporter:
                 m.group('addr')
             ),
             comment.rstrip())
+
+    def get_defined_ref_and_offset(
+        self,
+        ref,  # type: Reference
+    ):  # type: (...) -> tuple[Address, int | None]
+        """Return an address and offset within it for a given reference.
+
+        If the reference is an Offset Reference, the result will include the
+        base address and the offset within that. Otherwise, it will include
+        the address the reference points to without an offset.
+
+        Args:
+            ref (ghidra.program.model.symbol.Reference):
+                The reference to process.
+
+        Returns:
+            tuple:
+            A 2-tuple of:
+
+            Tuple:
+                0 (ghidra.program.model.address.Address):
+                    The target address.
+
+                1 (int):
+                    The offset within the target address, or ``None`` if
+                    this is not an offset address.
+        """
+        if isinstance(ref, OffsetReference):
+            return ref.getBaseAddress(), ref.getOffset()
+        else:
+            return ref.getToAddress(), None
 
     def get_ref_str_from_addr(
         self,
@@ -2368,6 +2397,121 @@ class BlockExporter:
                 addr = addr.addNoWrap(size)
             except Exception:
                 break
+
+    def _get_operand_info(
+        self,
+        code_unit,      # type: CodeUnit
+        operand_index,  # type: int
+        mnemonic,       # type: str
+    ):  # type: (...) -> tuple[str | None, Symbol | None, int]
+        """Return processed information for an operand.
+
+        This will process the operand and determine if it's a reference to
+        a target address or a scalar value.
+
+        If it's a reference to an address, a primary symbol will be returned
+        for that address, if one is found.
+
+        If it's a scalar, the operand value will be returned based on the
+        target assembler.
+
+        Args:
+            code_unit (ghidra.program.model.listing.CodeUnit):
+                The code unit to process.
+
+            operand_index (int):
+                The index of the operand.
+
+            mnemonic (str):
+                The instruction mnemonic this operand follows.
+
+        Returns:
+            tuple:
+            A 3-tuple of:
+
+            Tuple:
+                0 (str):
+                    The operand string, if a scalar. ``None`` otherwise.
+
+                1 (ghidra.program.model.symbol.Symbol):
+                    The primary symbol, if found. ``None`` otherwise.
+
+                2 (int):
+                    The offset from the primary symbol, if found. ``None``
+                    otherwise.
+        """
+        # Build a map of normalized target addresses to reference objects,
+        # based on the operands in this code unit.
+        op_refs = {
+            str(_ref.getToAddress()).split('::')[-1].lower(): _ref
+            for _ref in code_unit.getOperandReferences(operand_index)
+        }
+
+        op_str = None  # type: str | None
+        default_op_rep = \
+            code_unit.getDefaultOperandRepresentation(operand_index)
+
+        primary_symbol = None  # type: Symbol | None
+        primary_offset = 0     # type: int
+
+        # Loop through all the operands and convert any addresses to
+        # a suitable reference target if one is available. If one is
+        # found, it may be converted to a relative address, depending
+        # on the disassembly.
+        for op_obj in code_unit.getOpObjects(operand_index):
+            op_addr_ref = None  # type: str | None
+            op_addr = None      # type: Address | None
+
+            if isinstance(op_obj, GenericAddress):
+                # This is a generic address, which is not tied to
+                # a given bank. We'll use the lookup table of
+                # defined references if we can.
+                op_addr = op_obj
+                op_addr_ref = op_refs.get(str(op_obj).lower())
+            elif isinstance(op_obj, Address):
+                # This is an explicit address, which should resolve
+                # to a stable location.
+                op_addr = op_obj
+            elif isinstance(op_obj, Scalar):
+                # This may be a value to include as an operand, or
+                # it may be an address. Find out which it may be.
+                if default_op_rep.startswith('#'):
+                    # This is a static value. Format it appropriately.
+                    scalar_value = op_obj.getValue()
+
+                    if (abs(scalar_value) <= 0xFF and
+                        not mnemonic.startswith('j')):
+                        op_str = asm_mode.format_op_byte(scalar_value)
+                    else:
+                        op_str = asm_mode.format_op_word(scalar_value)
+
+                    break
+                else:
+                    # Treat this as a reference to convert to a
+                    # symbol.
+                    op_addr_ref = op_refs.get('%04x' % op_obj.getValue())
+            else:
+                # This isn't an operand value we need to transform.
+                continue
+
+            # If we have an address reference, determine the target
+            # address and offset.
+            op_addr_offset = 0
+
+            if op_addr_ref is not None:
+                op_addr, op_addr_offset = \
+                    self.get_defined_ref_and_offset(op_addr_ref)
+
+            # If we have an address, try to convert it to a symbol.
+            if op_addr is not None:
+                symbol = exporter.find_symbol_for_address(op_addr)
+
+                if symbol:
+                    primary_symbol = symbol
+                    primary_offset = op_addr_offset or 0
+                    break
+
+        return op_str, primary_symbol, primary_offset
 
     def _format_dest_offset(
         self,
