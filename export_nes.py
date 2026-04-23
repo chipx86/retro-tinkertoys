@@ -808,10 +808,11 @@ class FileWriter(object):
         assert self.dirname
 
         filename = '%s.%s' % (self.block_name, self.ext)
-        print('Writing %s...' % filename)
+        full_path = os.path.join(self.base_path, self.dirname, filename)
 
-        with open(os.path.join(self.base_path, self.dirname,
-                               filename), 'w') as fp:
+        print('Writing %s...' % full_path)
+
+        with open(full_path, 'w') as fp:
             self.fp = fp
 
             try:
