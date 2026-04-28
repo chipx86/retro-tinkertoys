@@ -889,7 +889,7 @@ class BytesWriter:
                 b = 0
                 is_displayable = False
             else:
-                is_displayable = chr(b) in DISPLAYABLE_CHARS
+                is_displayable = chr(b) in self.DISPLAYABLE_CHARS
 
             if cur_is_displayable != is_displayable:
                 cur_group = []
