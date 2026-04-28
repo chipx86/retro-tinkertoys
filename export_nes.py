@@ -2635,77 +2635,59 @@ class BlockExporter:
             for b in raw_instruction_bytes
         ]
 
-        code = []
-
+        # Convert the instruction to a mnemonic and generate state for it.
         mnemonic = code_unit.getMnemonicString().upper()
-        is_accumulator = (
-            instruction_bytes and
-            instruction_bytes[0] in ACCUMULATOR_OPCODES
-        )
 
-        operand_strings = []
+        operand_strings = []  # type: list[str]
 
-        if is_accumulator and code_unit.getLength() == 1:
-            code.append(mnemonic.ljust(3))
-        elif mnemonic == 'IGN':
-            assert code_unit.getNumOperands()
+        # Walk through all operands, processing them, normalizing their
+        # display, and handling any references to symbols.
+        for i in range(code_unit.getNumOperands()):
+            op_str, primary_symbol, primary_offset = \
+                self._get_operand_info(
+                    code_unit=code_unit,
+                    operand_index=i,
+                    mnemonic=mnemonic,
+                )
 
-            ops = code_unit.getBytes()
+            default_op_rep = code_unit.getDefaultOperandRepresentation(i)
+            norm_default_op_rep = default_op_rep.upper()
 
-            code += [
-                'db',
-                ','.join(
-                    '$%02x' % (op & 0xFF)
-                    for op in ops
-                ),
-            ]
-        else:
-            for i in range(code_unit.getNumOperands()):
-                op_str, primary_symbol, primary_offset = \
-                    self._get_operand_info(
-                        code_unit=code_unit,
-                        operand_index=i,
-                        mnemonic=mnemonic,
-                    )
+            if norm_default_op_rep.endswith(',X'):
+                index_suffix = ',X'
+            elif norm_default_op_rep.endswith(',Y'):
+                index_suffix = ',Y'
+            else:
+                index_suffix = ''
 
-                default_op_rep = code_unit.getDefaultOperandRepresentation(i)
-                norm_default_op_rep = default_op_rep.upper()
+            # If we found a symbol from the above, normalize it and
+            # update any operands.
+            if primary_symbol:
+                symbol_ref = self.normalize_ref(
+                    exporter.sanitize_label_name(primary_symbol[1]),
+                    primary_symbol[0],
+                    offset=primary_offset,
+                )
 
-                if norm_default_op_rep.endswith(',X'):
-                    index_suffix = ',X'
-                elif norm_default_op_rep.endswith(',Y'):
-                    index_suffix = ',Y'
+                if (norm_default_op_rep.startswith('(') and
+                    norm_default_op_rep.endswith(',X)')):
+                    op_str = '({},X)'.format(symbol_ref)
+                elif (norm_default_op_rep.startswith('(') and
+                      norm_default_op_rep.endswith('),Y')):
+                    op_str = '({}),Y'.format(symbol_ref)
                 else:
-                    index_suffix = ''
+                    op_str = '%s%s' % (symbol_ref, index_suffix)
+            elif not op_str:
+                op_str = self.normalize_operand_addressing(default_op_rep)
 
-                # If we found a symbol from the above, normalize it and
-                # update any operands.
-                if primary_symbol:
-                    symbol_ref = self.normalize_ref(
-                        exporter.sanitize_label_name(primary_symbol[1]),
-                        primary_symbol[0],
-                        offset=primary_offset,
-                    )
+            # Make sure Zero Page mode isn't used for these instructions.
+            if raw_instruction_bytes[0] in ABSOLUTE_ADDR_OPCODES:
+                op_str = asm_mode.ABSOLUTE_ADDR_FMT % op_str
 
-                    if (norm_default_op_rep.startswith('(') and
-                        norm_default_op_rep.endswith(',X)')):
-                        op_str = '({},X)'.format(symbol_ref)
-                    elif (norm_default_op_rep.startswith('(') and
-                          norm_default_op_rep.endswith('),Y')):
-                        op_str = '({}),Y'.format(symbol_ref)
-                    else:
-                        op_str = '%s%s' % (symbol_ref, index_suffix)
-                elif not op_str:
-                    op_str = self.normalize_operand_addressing(default_op_rep)
+            operand_strings.append(op_str)
 
-                # Make sure Zero Page mode isn't used for these instructions.
-                if raw_instruction_bytes[0] in ABSOLUTE_ADDR_OPCODES:
-                    op_str = asm_mode.ABSOLUTE_ADDR_FMT % op_str
-
-                operand_strings.append(op_str)
-
-            code.append(mnemonic.ljust(3))
-            code += operand_strings
+        code = [mnemonic.ljust(3)]
+        code += operand_strings
 
         return instruction_bytes, code
 
