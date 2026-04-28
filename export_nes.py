@@ -137,11 +137,12 @@ MAX_LINE_LEN = 79
 MAX_COMMENT_LINE_LEN = 77
 
 
+#: A set of 6502 opcodes that perform in accumulator addressing mode.
 ACCUMULATOR_OPCODES = {
-    0x0A,
-    0x4A,
-    0x2A,
-    0x6A,
+    0x0A,  # ASL
+    0x4A,  # LSR
+    0x2A,  # ROL
+    0x6A,  # ROR
 }
 
 
