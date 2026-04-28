@@ -1062,23 +1062,7 @@ class BaseFileWriter(object):
         addr,         # type: Address
         eol_comment,  # type: str | None
     ):  # type: (...) -> None
-        if eol_comment:
-            padding = ' ' * max(1, self.COMMENT_COLUMN - len(line) - 1)
-            line_prefix = '%s%s' % (line, padding)
-
-            self.write_lines(
-                textwrap.wrap(
-                    eol_comment,
-                    break_long_words=False,
-                    break_on_hyphens=False,
-                    initial_indent='%s; ' % line_prefix,
-                    subsequent_indent='%s; ' % (' ' * len(line_prefix)),
-                    width=self.MAX_COMMENT_LINE_LEN,
-                ),
-                addr=addr)
-        else:
-            self.write_line(line,
-                            addr=addr)
+        raise NotImplementedError
 
     def write_blank_line(
         self,
@@ -1262,7 +1246,7 @@ class TextFileWriter(BaseFileWriter):
         eol_comment,  # type: str | None
     ):  # type: (...) -> None
         if eol_comment:
-            padding = ' ' * max(1, COMMENT_COLUMN - len(line) - 1)
+            padding = ' ' * max(1, self.COMMENT_COLUMN - len(line) - 1)
             line_prefix = '%s%s' % (line, padding)
 
             self.write_lines(
@@ -1272,7 +1256,7 @@ class TextFileWriter(BaseFileWriter):
                     break_on_hyphens=False,
                     initial_indent='%s; ' % line_prefix,
                     subsequent_indent='%s; ' % (' ' * len(line_prefix)),
-                    width=MAX_COMMENT_LINE_LEN,
+                    width=self.MAX_COMMENT_LINE_LEN,
                 ),
                 addr=addr)
         else:
