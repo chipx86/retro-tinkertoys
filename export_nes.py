@@ -635,6 +635,12 @@ class CA65Target(BaseAssemblyTarget):
 
 
 class BytesWriter:
+    """Writer wrapper for outputting sequences of bytes.
+
+    This helps to output statements to a writer that defines bytes, handling
+    wrapping, commenting, and data types for the assembly target.
+    """
+
     #: A set of all displayable characters.
     DISPLAYABLE_CHARS = set(
         string.ascii_letters +
@@ -647,6 +653,12 @@ class BytesWriter:
         self,
         writer,  # type: BaseFileWriter
     ):  # type: (...) -> None
+        """Initialize the writer.
+
+        Args:
+            writer (BaseFileWriter):
+                The writer to output to.
+        """
         self.writer = writer
 
         self.buffer = []           # type: list[int | None]
@@ -664,13 +676,49 @@ class BytesWriter:
         data_type=None,           # type: DataType | None
         labeled=False,            # type: bool
     ):  # type: (...) -> None
+        """Append a value to the sequence of bytes.
+
+        This takes care to output the value either on the current line or
+        on a new line, depending on the state of the sequence and the
+        arguments passed.
+
+        An end-of-line comment, change in data type or size, or change in
+        labeling will cause this to start a new sequence.
+
+        Args:
+            value (int):
+                The value to append.
+
+            default_start_addr (ghidra.program.model.address.Address,
+                                optional):
+                The default starting address for the bytes, if this is the
+                first call to ``append()``.
+
+            size (int, optional):
+                The size of the value to write in bytes.
+
+                This can be 1 or 2.
+
+            eol_comment (str, optional):
+                The optional comment to add to the end of the line.
+
+            data_type (ghidra.program.model.data.DataType, optional):
+                The value's data type.
+
+            labeled (bool, optional):
+                Whether this value has its own label preceding it.
+        """
         assert value is None or isinstance(value, int), (
             'value was %r, not None or int' % value
         )
 
         if self.start_addr is None:
+            # This is the first call to append(). Set the start address for
+            # the sequence to the provided default address.
             self.start_addr = default_start_addr
 
+        # Check if there's state that requires this to be outputted separately
+        # from other bytes. This would start a new sequence.
         if (eol_comment or
             data_type != self.cur_data_type or
             size != self.cur_size or
@@ -686,6 +734,7 @@ class BytesWriter:
         self.cur_size = size
         self.labeled = labeled
 
+        # Output the value, capping to the provided size if needed.
         if value is None:
             buffer.append(None)
         elif size == 1:
@@ -698,18 +747,35 @@ class BytesWriter:
                 % value
             )
 
+        # Check if we need to flush this to the file, ending the line.
         if (eol_comment or
             (len(buffer) * size) >= asm_mode.MAX_BYTES_PER_LINE or
             isinstance(data_type, Enum)):
+            # We do. Flush it.
             self.flush(eol_comment=eol_comment)
 
     def flush(
         self,
         eol_comment=None  # type: str | None
     ):  # type: (...) -> bool
+        """Flush the buffer to the file.
+
+        This will output the sequence of bytes to a line and then begin a
+        new line.
+
+        Args:
+            eol_comment (str, optional):
+                The optional comment to add to the end of the line.
+
+        Returns:
+            bool:
+            ``True`` if the data was written. ``False`` if there was nothing
+            to write.
+        """
         buffer = self.buffer
 
         if not buffer:
+            # There's nothing to write.
             return False
 
         start_addr = self.start_addr
@@ -719,6 +785,8 @@ class BytesWriter:
         data_type_str = data_type.getName()
         assert data_type_str
 
+        # Different data types will need to be written specially, based on
+        # the target assembler.
         if data_type_str == 'char':
             # This is a char. Output as strings.
             groups = self._group_string(buffer)
@@ -730,6 +798,7 @@ class BytesWriter:
                 ),
             ]
         elif isinstance(data_type, Enum):
+            # This is an enum value. Output as a defined enum value.
             assert self.cur_size == 1
 
             data_text = [
@@ -768,15 +837,19 @@ class BytesWriter:
                 )
             ]
 
+        # Check if a new comment should be generated for the end of the line.
         if not eol_comment and start_addr:
             eol_comment = '%s %s' % (
                 get_addr_for_eol_comment(start_addr),
                 data_type_str,
             )
 
+        # Write it to the file.
         self.writer.write_code(data_text,
                                addr=start_addr,
                                eol_comment=eol_comment)
+
+        # Reset the buffer for the next sequence of bytes.
         self.buffer = []
         self.start_addr = None
 
@@ -786,6 +859,26 @@ class BytesWriter:
         self,
         buffer,  # type: list[int | None]
     ):  # type: (...) -> list[tuple[bool, list[int]]]
+        """Return groups of data for a buffer representing a string.
+
+        This will group together all consecutive displayable characters and
+        all non-displayable characters, returning the list of groups.
+
+        Args:
+            buffer (list of int):
+                The buffer to convert into string groups.
+
+        REturns:
+            list of tuple:
+            A list of groups, each a 2-tuple in the form of:
+
+            Tuple:
+                0 (bool):
+                    Whether the group consists of displayable characters.
+
+                1 (list of int):
+                    The list of byte values in the group.
+        """
         cur_group = []             # type: list[int]
         cur_is_displayable = True  # type: bool
 
@@ -815,6 +908,20 @@ class BytesWriter:
         self,
         group,  # type: tuple[bool, list[int]]
     ):  # type: (...) -> str
+        """Return a string group as a formatted string.
+
+        If the group represents displayable characters, it will be returned
+        as a string. Otherwise, it will be formatted as a sequence of byte
+        values.
+
+        Args:
+            group (tuple):
+                The group tuple to format.
+
+        Returns:
+            str:
+            The formatted string.
+        """
         if group[0]:
             return '"%s"' % ''.join(
                 chr(b)
@@ -830,6 +937,16 @@ class BytesWriter:
         self,
         value,  # type: int | None
     ):  # type: (...) -> str
+        """Return a char as a formatted string.
+
+        Args:
+            value (int):
+                The char value to format.
+
+        Returns:
+            str:
+            The displayable character for the value.
+        """
         return chr(value or 0)
 
     def _format_enum_value(
@@ -837,6 +954,22 @@ class BytesWriter:
         value,      # type: int | None
         data_type,  # type: Enum
     ):  # type: (...) -> str
+        """Return an enum value as a formatted string.
+
+        If this is a valid value for the enum, its name will be returned.
+        Otherwise, the byte value will be returned.
+
+        Args:
+            value (int):
+                The enum value to format.
+
+            data_type (ghidra.program.model.data.Enum):
+                The data type for the enum value.
+
+        Returns:
+            str:
+            The formatted enum value.
+        """
         if value is None:
             return '$00'
 
