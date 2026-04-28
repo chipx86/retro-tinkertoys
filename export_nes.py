@@ -124,18 +124,6 @@ WORD_DATA_TYPES = {
 }
 
 
-DISPLAYABLE_CHARS = set(
-    string.ascii_letters +
-    string.digits +
-    string.punctuation +
-    ' '
-)
-
-COMMENT_COLUMN = 45
-MAX_RAW_BYTES_PER_LINE = 8
-MAX_LINE_LEN = 79
-MAX_COMMENT_LINE_LEN = 77
-
 
 #: A set of 6502 opcodes that perform in accumulator addressing mode.
 ACCUMULATOR_OPCODES = {
@@ -647,6 +635,14 @@ class CA65Target(BaseAssemblyTarget):
 
 
 class BytesWriter:
+    #: A set of all displayable characters.
+    DISPLAYABLE_CHARS = set(
+        string.ascii_letters +
+        string.digits +
+        string.punctuation +
+        ' '
+    )
+
     def __init__(
         self,
         writer,  # type: FileWriter
@@ -854,6 +850,15 @@ class FileWriter(object):
     ext = None      # type: str | None
     dirname = None  # type: str | None
 
+    #: The column position for comments in assembly text output.
+    COMMENT_COLUMN = 45
+
+    #: The maximum length of a line containing a comment.
+    MAX_COMMENT_LINE_LEN = 77
+
+    #: The maximum length of a line in assembly text output.
+    MAX_LINE_LEN = 79
+
     TEMPLATE_RE = re.compile(
         r'{{@(?P<type>SYMBOL):(?P<value>.+?)@}}'
     )
@@ -925,7 +930,7 @@ class FileWriter(object):
         eol_comment,  # type: str | None
     ):  # type: (...) -> None
         if eol_comment:
-            padding = ' ' * max(1, COMMENT_COLUMN - len(line) - 1)
+            padding = ' ' * max(1, self.COMMENT_COLUMN - len(line) - 1)
             line_prefix = '%s%s' % (line, padding)
 
             self.write_lines(
@@ -935,7 +940,7 @@ class FileWriter(object):
                     break_on_hyphens=False,
                     initial_indent='%s; ' % line_prefix,
                     subsequent_indent='%s; ' % (' ' * len(line_prefix)),
-                    width=MAX_COMMENT_LINE_LEN,
+                    width=self.MAX_COMMENT_LINE_LEN,
                 ),
                 addr=addr)
         else:
@@ -1014,7 +1019,7 @@ class FileWriter(object):
         self.write_blank_line(leading_blank)
 
         if use_plate_syntax:
-            bullet_extra = '=' * (MAX_LINE_LEN - len(indent) - 3)
+            bullet_extra = '=' * (self.MAX_LINE_LEN - len(indent) - 3)
         else:
             bullet_extra = ''
 
@@ -1052,7 +1057,7 @@ class FileWriter(object):
                     break_on_hyphens=False,
                     initial_indent=line_prefix,
                     subsequent_indent=line_prefix,
-                    width=MAX_COMMENT_LINE_LEN)
+                    width=self.MAX_COMMENT_LINE_LEN)
             else:
                 norm_lines.append(line_prefix.rstrip())
 
