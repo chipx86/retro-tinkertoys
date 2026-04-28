@@ -645,7 +645,7 @@ class BytesWriter:
 
     def __init__(
         self,
-        writer,  # type: FileWriter
+        writer,  # type: BaseFileWriter
     ):  # type: (...) -> None
         self.writer = writer
 
@@ -846,7 +846,7 @@ class BytesWriter:
         return asm_mode.format_data_byte(value)
 
 
-class FileWriter(object):
+class BaseFileWriter(object):
     ext = None      # type: str | None
     dirname = None  # type: str | None
 
@@ -1118,7 +1118,7 @@ class FileWriter(object):
         raise NotImplementedError
 
 
-class TextFileWriter(FileWriter):
+class TextFileWriter(BaseFileWriter):
     ext = 'asm'
     dirname = 'src'
 
@@ -1221,7 +1221,7 @@ class HTMLString(unicode):
         return self
 
 
-class HTMLFileWriter(FileWriter):
+class HTMLFileWriter(BaseFileWriter):
     ext = 'html'
     dirname = 'html'
 
@@ -1614,7 +1614,7 @@ class HTMLFileWriter(FileWriter):
         return name
 
 
-class MultiFileWriter(FileWriter):
+class MultiFileWriter(BaseFileWriter):
     def __init__(
         self,
         *args,
@@ -1727,7 +1727,7 @@ class BlockExporter:
 
     def export(
         self,
-        writer,  # type: FileWriter
+        writer,  # type: BaseFileWriter
     ):  # type: (...) -> None
         block = self.block
         exporter = self.exporter
@@ -1799,7 +1799,7 @@ class BlockExporter:
         self,
         addr,          # type: Address
         bytes_writer,  # type: BytesWriter
-        writer,        # type: FileWriter
+        writer,        # type: BaseFileWriter
     ):  # type: (...) -> int
         code_unit = self.exporter.listing.getCodeUnitAt(addr)
 
@@ -1817,7 +1817,7 @@ class BlockExporter:
         self,
         code_unit,  # type: CodeUnit
         addr,       # type: Address
-        writer      # type: FileWriter
+        writer      # type: BaseFileWriter
     ):  # type: (...) -> int
         assert addr == code_unit.getAddress()
 
@@ -1849,7 +1849,7 @@ class BlockExporter:
         self,
         code_unit,  # type: CodeUnit
         addr,       # type: Address
-        writer,     # type: FileWriter
+        writer,     # type: BaseFileWriter
     ):  # type: (...) -> int
         data = self.exporter.listing.getDataContaining(addr)
 
@@ -1858,7 +1858,7 @@ class BlockExporter:
     def export_labels_and_comments(
         self,
         addr,           # type: Address
-        writer,         # type: FileWriter
+        writer,         # type: BaseFileWriter
         is_inner=False  # type: bool
     ):  # type: (...) -> dict[str, Any] | None
         exporter = self.exporter
@@ -1955,7 +1955,7 @@ class BlockExporter:
     def export_comment(
         self,
         comment,                # type: str | None
-        writer,                 # type: FileWriter
+        writer,                 # type: BaseFileWriter
         indent='',              # type: str
         leading_blank=1,        # type: int
         use_plate_syntax=False  # type: bool
@@ -1977,8 +1977,8 @@ class BlockExporter:
         self,
         code_unit,  # type: CodeUnit
         addr,       # type: Address
-        writer,     # type: FileWriter
-    ):  # type: (...) -> list[tuple[str, str]]
+        writer,     # type: BaseFileWriter
+    ):  # type: (...) -> tuple[list[str], list[str]]
         exporter = self.exporter
 
         raw_instruction_bytes = [
@@ -2265,7 +2265,7 @@ class BlockExporter:
     def export_data_tree(
         self,
         data,             # type: Data
-        writer,           # type: FileWriter
+        writer,           # type: BaseFileWriter
         index_path=None,  # type: list[int] | None
     ):  # type: (...) -> int
         if index_path is None:
@@ -2336,7 +2336,7 @@ class BlockExporter:
         data_type,      # type: DataType
         data_type_str,  # type: str
         size,           # type: int
-        writer,         # type: FileWriter
+        writer,         # type: BaseFileWriter
         addr,           # type: Address
         index_path,     # type: list[int]
     ):  # type: (...) -> None
