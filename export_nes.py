@@ -50,30 +50,53 @@ if 0:
     from typing import Any, Callable, Mapping
 
 
+###########################################################################
+# Pattern matching
+###########################################################################
+
+#: A regex matching invalid characters in label names.
 INVALID_LABEL_NAME_RE = re.compile(r'[^A-Za-z0-9_@]')
 
+
+#: A regex matching assembly instructions using indirect addressing.
 INDIRECT_MATCH = re.compile(
     r'(?P<prefix>\()'
     r'?\$?(?P<addr>0x[A-Fa-f0-9]+)'
     r'(?P<suffix>\),Y|,X\))$',
-    re.IGNORECASE)
+    re.IGNORECASE,
+)
 
+
+#: A regex matching assembly instructions using absolute addressing.
 ABSOLUTE_MATCH = re.compile(
     r'\$?'
     r'(?P<addr>0x[A-Fa-f0-9]+)'
     r'(?P<suffix>,(?:X|Y))?$',
-    re.IGNORECASE)
+    re.IGNORECASE,
+)
 
+
+#: A regex matching placeholders for unresolved symbols in comments.
 SYMBOL_PLACEHOLDER_RE = re.compile(
     r'{@sym(?:bol) (?P<addr>.+?)}'
 )
 
+
+#: A regex matching resolvable symbols, comprised of a block and an address.
 SYMBOL_RE = re.compile(
     r'(?:(?P<block>[^:]+)::)(?P<addr>[A-Fa-f0-9]+)'
 )
 
+
+#: A regex matching addresses.
+#:
+#: This may be 1 or 2 bytes in length.
 ADDR_RE = re.compile(r'[A-Fa-f0-9]{2,4}')
 
+
+###########################################################################
+# Data types
+###########################################################################
 
 #: A set of Ghidra reference data types.
 #:
@@ -124,6 +147,9 @@ WORD_DATA_TYPES = {
 }
 
 
+###########################################################################
+# Opcodes and addressing modes
+###########################################################################
 
 #: A set of 6502 opcodes that perform in accumulator addressing mode.
 ACCUMULATOR_OPCODES = {
@@ -189,6 +215,10 @@ ABSOLUTE_ADDR_OPCODES = {
 }
 
 
+###########################################################################
+# Common utility functions
+###########################################################################
+
 def get_addr_for_eol_comment(
     addr,  # type: Address
 ):  # type: (...) -> str
@@ -227,6 +257,10 @@ def get_data_type_str(
     else:
         return data_type.getName()
 
+
+###########################################################################
+# Assembly output support
+###########################################################################
 
 class OutputMode:
     """Types of assembly output.
@@ -633,6 +667,10 @@ class CA65Target(BaseAssemblyTarget):
         """
         return '${:02x}'.format(value & 0xFF)
 
+
+###########################################################################
+# Assembly output writing
+###########################################################################
 
 class BytesWriter:
     """Writer wrapper for outputting sequences of bytes.
@@ -1828,6 +1866,10 @@ class MultiFileWriter(BaseFileWriter):
         self.asm_writer.write_label(*args, **kwargs)
         self.html_writer.write_label(*args, **kwargs)
 
+
+###########################################################################
+# Exporters
+###########################################################################
 
 class BlockExporter:
     def __init__(
@@ -3467,7 +3509,7 @@ class Exporter:
 
 
 def main():
-    """Main class for the exporter plugin.
+    """Main function for the exporter plugin.
 
     This will set up the configuration state and the exporter and begin
     the export process.
