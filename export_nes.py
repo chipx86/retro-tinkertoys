@@ -647,15 +647,9 @@ class BytesWriter:
         if self.start_addr is None:
             self.start_addr = default_start_addr
 
-        if data_type is not None:
-            data_type_str = data_type.getName()
-        else:
-            data_type_str = None
-
         if (eol_comment or
             data_type != self.cur_data_type or
             size != self.cur_size or
-            #labeled != self.labeled):
             (labeled and not self.labeled)):
             # Distinguish this from previous bytes.
             flushed = self.flush()
@@ -1801,14 +1795,6 @@ class BlockExporter:
 
         self.export_labels_and_comments(addr, writer, is_inner=True)
 
-#        symbol = exporter.find_symbol_for_address(addr)
-
-#        if symbol:
-#            if not listing.getComment(CodeUnit.PLATE_COMMENT, addr):
-#                fp.write('\n')
-#
-#            fp.write('%s:\n' % symbol)
-
         # Generate the human-readable instruction.
         instruction_bytes, code = self.generate_code(code_unit, addr, writer)
         writer.write_code(
@@ -2329,7 +2315,7 @@ class BlockExporter:
         bytes_writer = self.bytes_writer
         end_addr = self.end_addr
         check_jump_tables = data_type_str in REF_DATA_TYPES
-        code_op = 'XXX'
+        code_op = None  # type: str | None
 
         if check_jump_tables:
             if data_type_str in WORD_DATA_TYPES:
@@ -2415,6 +2401,8 @@ class BlockExporter:
                                               dest_name)
 
                     # Write the entry for the table.
+                    assert code_op is not None
+
                     writer.write_code(
                         [code_op, dest_name],
                         addr=addr,
@@ -2727,16 +2715,11 @@ class BlockExporter:
         for ref in ref_manager.getReferencesFrom(addr):
             to_addr = ref.getToAddress()
 
-            if to_addr is None:
-                continue
-
-            func = func_manager.getFunctionAt(to_addr)
-
-            if func:
-                return func
-
-            for symbol in symbol_table.getSymbols(to_addr):
-                return symbol
+            if to_addr:
+                return (
+                    func_manager.getFunctionAt(to_addr) or
+                    next(symbol_table.getSymbols(to_addr))
+                )
 
         return None
 
@@ -3222,12 +3205,10 @@ class Exporter:
         addr,  # type: Address | str
     ):  # type: (...) -> list[tuple[str, str]]
         if isinstance(addr, (str, unicode)):
-            if SYMBOL_RE.match(addr):
-                addr = self.default_addr_space.getAddress(addr)
-            else:
+            if not SYMBOL_RE.match(addr):
                 return []
-                assert False, addr
-                return addr
+
+            addr = self.default_addr_space.getAddress(addr)
 
         result = []  # type: list[tuple[str, str]]
 
@@ -3246,10 +3227,6 @@ class Exporter:
 
         if 1:
             for symbol in symbols:
-                #assert symbol.getName() != 'PPUADDR', (
-                #    symbol.getAddress().getAddressSpace().getName(),
-                #)
-
                 symbol_info = (
                     self.get_block_name_for_addr(symbol.getAddress()),
                     self.sanitize_label_name(symbol.getName()),
