@@ -144,32 +144,59 @@ ACCUMULATOR_OPCODES = {
     0x6A,
 }
 
-ZERO_PAGE_OPCODES = {
-    0xB5,  # LDA,X
-}
 
+#: A set of 6502 opcodes that perform in absolute addressing mode.
 ABSOLUTE_ADDR_OPCODES = {
     0x6D,  # ADC
+    0x7D,  # ADC,X
+    0x79,  # ADC,Y
     0x2D,  # AND
+    0x3D,  # AND,X
+    0x39,  # AND,Y
     0x0E,  # ASL
+    0x1E,  # ASL,X
     0x2C,  # BIT
     0xCD,  # CMP
+    0xDD,  # CMP,X
+    0xD9,  # CMP,Y
     0xEC,  # CPX
     0xCC,  # CPY
     0xCE,  # DEC
+    0xDE,  # DEC,X
     0x4D,  # EOR
+    0x5D,  # EOR,X
+    0x59,  # EOR,Y
     0xEE,  # INC
+    0xFE,  # INC,X
     0xAD,  # LDA
+    0xBD,  # LDA,X
+    0xB9,  # LDA,Y
     0xAE,  # LDX
+    0xBE,  # LDX,X
     0xAC,  # LDY
+    0xBC,  # LDY,X
     0x4E,  # LSR
+    0x5E,  # LSR,X
     0x0D,  # ORA
+    0x1D,  # ORA,X
+    0x19,  # ORA,Y
     0x2E,  # ROL
+    0x3E,  # ROL,X
     0x6E,  # ROR
+    0x7E,  # ROR,X
     0xED,  # SBC
+    0xFD,  # SBC,X
+    0xF9,  # SBC,Y
     0x8D,  # STA
+    0x9D,  # STA,X
+    0x99,  # STA,Y
     0x8E,  # STX
     0x8C,  # STY
+
+    # Ignoring these unless there's a good reason to add them. They feel
+    # just a bit messy in the disassembly.
+    # 0x4C,  # JMP
+    # 0x20,  # JSR
 }
 
 
@@ -381,7 +408,7 @@ class ASM6FTarget(BaseAssemblyTarget):
     COMPACT_BYTES_OP = 'hex'
     COMPACT_BYTES_SEP = ' '
 
-    ZERO_PAGE_FMT = 'a:%s'
+    ABSOLUTE_ADDR_FMT = 'a:%s'
 
     def get_bank_start_lines(
         self,
@@ -509,7 +536,7 @@ class CA65Target(BaseAssemblyTarget):
     COMPACT_BYTES_OP = '.byte'
     COMPACT_BYTES_SEP = ','
 
-    ZERO_PAGE_FMT = 'a:%s'
+    ABSOLUTE_ADDR_FMT = 'a:%s'
 
     def get_bank_start_lines(
         self,
@@ -2023,7 +2050,7 @@ class BlockExporter:
 
                 # Make sure Zero Page mode isn't used for these instructions.
                 if raw_instruction_bytes[0] in ABSOLUTE_ADDR_OPCODES:
-                    op_str = asm_mode.ZERO_PAGE_FMT % op_str
+                    op_str = asm_mode.ABSOLUTE_ADDR_FMT % op_str
 
                 operand_strings.append(op_str)
 
