@@ -1039,7 +1039,19 @@ class BytesWriter:
 
 
 class BaseFileWriter(object):
+    """Base class for file writers.
+
+    This provides basic functionality for writing the components of lines
+    and statements for an output format. Subclasses can override this to
+    specially process and output content for its format.
+
+    The writer must be opened before any content can be written.
+    """
+
+    #: The file extension for the file type.
     ext = None      # type: str | None
+
+    #: The subdirectory where the file should be placed.
     dirname = None  # type: str | None
 
     #: The column position for comments in assembly text output.
@@ -1051,6 +1063,7 @@ class BaseFileWriter(object):
     #: The maximum length of a line in assembly text output.
     MAX_LINE_LEN = 79
 
+    #: A regex for templated values to parse and populate.
     TEMPLATE_RE = re.compile(
         r'{{@(?P<type>SYMBOL):(?P<value>.+?)@}}'
     )
@@ -1061,6 +1074,18 @@ class BaseFileWriter(object):
         block_name,    # str
         program_name,  # str
     ):  # type: (...) -> None
+        """Initialize the writer.
+
+        Args:
+            base_path (str):
+                The base path to write to.
+
+            block_name (str):
+                The name of the block being written.
+
+            program_name (str):
+                The name of the program being disassembled.
+        """
         self.base_path = base_path
         self.block_name = block_name
         self.program_name = program_name
@@ -1070,6 +1095,13 @@ class BaseFileWriter(object):
 
     @contextmanager
     def open(self):  # typing.Generator
+        """Open the file for writing.
+
+        This will display progress and begin opening the file for writing.
+
+        Context:
+            The file will be opened for writing.
+        """
         assert self.ext
         assert self.dirname
 
@@ -1087,6 +1119,7 @@ class BaseFileWriter(object):
                 self.fp = None
 
     def new_code_unit(self):  # type: (...) -> None
+        """Prepare for a new code unit."""
         pass
 
     def write_line(
@@ -1094,6 +1127,17 @@ class BaseFileWriter(object):
         line,       # type: str
         addr=None,  # type: Address | None
     ):  # type: (...) -> None
+        """Write a line to the file.
+
+        The line will be processed and then formatted before being written.
+
+        Args:
+            line (str):
+                The line to write.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address of the line.
+        """
         fp = self.fp
         assert fp is not None
 
@@ -1106,6 +1150,19 @@ class BaseFileWriter(object):
         lines,      # type: list[str]
         addr=None,  # type: Address
     ):  # type: (...) -> None
+        """Write a list of line to the file.
+
+        Each line will be processed (but not currently formatted).
+
+        Args:
+            lines (list of str):
+                The list of lines to write.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address of the first line.
+
+                This is presently unused.
+        """
         fp = self.fp
         assert fp is not None
 
@@ -1121,12 +1178,36 @@ class BaseFileWriter(object):
         addr,         # type: Address
         eol_comment,  # type: str | None
     ):  # type: (...) -> None
+        """Write a line with an end-of-line comment.
+
+        This must be implemented by subclasses.
+
+        Args:
+            lines (str):
+                The line to write.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address of the line.
+
+            eol_comment (str):
+                The commemnt to add to the end of the line.
+        """
         raise NotImplementedError
 
     def write_blank_line(
         self,
         count=1,  # type: int
     ):  # type: (...) -> None
+        """Write the specified number of blank lines.
+
+        If blank lines have already been accumulated, they will be deducted
+        from the provided count.
+
+        Args:
+            count (int, optional):
+                The maximum number of blank lines to output since the last
+                non-blank line.
+        """
         fp = self.fp
         assert fp is not None
 
@@ -1146,6 +1227,17 @@ class BaseFileWriter(object):
         name,  # type: str
         addr,  # type: Address
     ):  # type: (...) -> None
+        """Write an anchor to the file.
+
+        This is not required to be implemented by the subclass.
+
+        Args:
+            name (str):
+                The name of the anchor.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address of the anchor.
+        """
         pass
 
     def write_label(
@@ -1155,6 +1247,21 @@ class BaseFileWriter(object):
         is_local=False,    # type: bool
         eol_comment=None,  # type: str | None
     ):  # type: (...) -> None
+        """Write a label.
+
+        Args:
+            label_name (str):
+                The name of the label.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address the label points to.
+
+            is_local (bool, optional):
+                Whether this is a local label within a parent context.
+
+            eol_comment (str, optional):
+                The optional commemnt to add to the end of the line.
+        """
         self.write_line_with_eol_comment(
             self.format_label(label_name, addr,
                               is_local=is_local),
@@ -1169,6 +1276,25 @@ class BaseFileWriter(object):
         instruction_bytes=None,  # type: list[str] | None
         eol_comment=None,        # type: str | None
     ):  # type: (...) -> None
+        """Write a line of instruction code.
+
+        The code will be formatted and processed before being written.
+
+        Args:
+            code (list of str):
+                The instruction and operands to format and write.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address of the instruction.
+
+            instruction_bytes (list of str, optional):
+                The list of bytes that make up the instruction and operands.
+
+                This is currently unused.
+
+            eol_comment (str, optional):
+                The optional commemnt to add to the end of the line.
+        """
         self.write_line_with_eol_comment(
             self.process_line(self.format_code(code)),
             addr=addr,
@@ -1179,6 +1305,12 @@ class BaseFileWriter(object):
         self,
         equs,       # type: list[tuple[str, str]]
     ):  # type: (...) -> None
+        """Write equality/enums/constants.
+
+        Args:
+            equs (list of tuple):
+                The list of values in ``(name, value)`` form.
+        """
         self.write_lines(self.format_equs(equs))
 
     def write_comment(
@@ -1189,6 +1321,24 @@ class BaseFileWriter(object):
         leading_blank=1,         # type: int
         use_plate_syntax=False,  # type: bool
     ):  # type: (...) -> None
+        """Write a comment line.
+
+        Args:
+            comment (str):
+                The comment to write.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address the comment corresponds to.
+
+            indent (str, optional):
+                Any indentation to provide before the comment.
+
+            leading_blank (int, optional):
+                The leading number of blank lines before this comment.
+
+            use_plate_syntax (bool, optional):
+                Whether to output using plate syntax.
+        """
         if not comment or not comment.strip():
             return
 
@@ -1199,9 +1349,9 @@ class BaseFileWriter(object):
         else:
             bullet_extra = ''
 
-        norm_lines = [  # type: list[str]
+        norm_lines = [
             ';%s' % bullet_extra,
-        ]
+        ]  # type: list[str]
 
         lines = comment.splitlines()
 
@@ -1251,26 +1401,73 @@ class BaseFileWriter(object):
         indent,            # type: str
         use_plate_syntax,  # type: bool
     ):  # type: (...) -> None
-        self.write_lines(lines,
-                         addr=addr)
+        """Write one or more comment lines.
+
+        Args:
+            lines (list of str):
+                The list of lines to write.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address the first comment corresponds to.
+
+            indent (str, optional):
+                Any indentation to provide before the comment.
+
+            use_plate_syntax (bool, optional):
+                Whether to output using plate syntax.
+        """
+        raise NotImplementedError
 
     def format_line(
         self,
         line,  # type: str
         addr,  # type: Address | None
     ):  # type: (...) -> str
-        return '%s\n' % line
+        """Return a formatted representation of an arbitrary line.
+
+        Args:
+            line (str):
+                The line to format.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address of the line.
+
+        Returns:
+            str:
+            The formatted line.
+        """
+        raise NotImplementedError
 
     def format_code(
         self,
         code_parts,  # type: list[str]
     ):  # type: (...) -> str
+        """Return a formatted representation of a code line.
+
+        Args:
+            code_parts (list of str):
+                The list of components of the code.
+
+        Returns:
+            list of str:
+            The list of formatted lines.
+        """
         raise NotImplementedError
 
     def format_equs(
         self,
         equs,  # type: list[tuple[str, str]]
     ):  # type: (...) -> list[str]
+        """Format equalities/enums/constants.
+
+        Args:
+            equs (list of tuple):
+                The list of values in ``(name, value)`` form.
+
+        Returns:
+            list of str:
+            The list of formatted lines.
+        """
         raise NotImplementedError
 
     def format_label(
@@ -1279,22 +1476,69 @@ class BaseFileWriter(object):
         addr,        # type: Address
         is_local,    # type: bool
     ):  # type: (...) -> str
+        """Format a label.
+
+        Args:
+            label_name (str):
+                The name of the label.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address of the line.
+
+            is_local (bool):
+                Whether this is a local label within a parent context.
+
+        Returns:
+            str:
+            The formatted line.
+        """
         raise NotImplementedError
 
     def process_line(
         self,
         line,  # type: str
     ):  # type: (...) -> str
+        """Process the contents of a line.
+
+        This defaults to processing any template strings, using
+        :py:meth:`process_template_var` for any that are found.
+
+        Args:
+            line (str):
+                The line to process.
+
+        Returns:
+            str:
+            The resulting line.
+        """
         return self.TEMPLATE_RE.sub(self.process_template_var, line)
 
     def process_template_var(
         self,
         m,  # type: re.Match
     ):  # type: (...) -> str
+        """Process a template variable in a line.
+
+        Args:
+            m (re.Match):
+                The match result found in the string.
+
+        Returns:
+            str:
+            The value to populate where matched.
+        """
         raise NotImplementedError
 
 
 class TextFileWriter(BaseFileWriter):
+    """Writer for an assembly text file.
+
+    This provides basic functionality for writing the components of lines
+    and statements for an output format.
+
+    The writer must be opened before any content can be written.
+    """
+
     ext = 'asm'
     dirname = 'src'
 
@@ -1304,6 +1548,20 @@ class TextFileWriter(BaseFileWriter):
         addr,         # type: Address
         eol_comment,  # type: str | None
     ):  # type: (...) -> None
+        """Write a line with an end-of-line comment.
+
+        The line will be formatted with the comment wrapped as needed.
+
+        Args:
+            lines (str):
+                The line to write.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address of the line.
+
+            eol_comment (str):
+                The commemnt to add to the end of the line.
+        """
         if eol_comment:
             padding = ' ' * max(1, self.COMMENT_COLUMN - len(line) - 1)
             line_prefix = '%s%s' % (line, padding)
@@ -1329,6 +1587,21 @@ class TextFileWriter(BaseFileWriter):
         indent,            # type: str
         use_plate_syntax,  # type: bool
     ):  # type: (...) -> None
+        """Write one or more comment lines.
+
+        Args:
+            lines (list of str):
+                The list of lines to write.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address the comment corresponds to.
+
+            indent (str, optional):
+                Any indentation to provide before the comment.
+
+            use_plate_syntax (bool, optional):
+                Whether to output using plate syntax.
+        """
         fp = self.fp
         assert fp is not None
 
@@ -1339,16 +1612,56 @@ class TextFileWriter(BaseFileWriter):
             ],
             addr=addr)
 
+    def format_line(
+        self,
+        line,  # type: str
+        addr,  # type: Address | None
+    ):  # type: (...) -> str
+        """Return a formatted representation of an arbitrary line.
+
+        Args:
+            line (str):
+                The line to format.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address of the line.
+
+        Returns:
+            str:
+            The formatted line.
+        """
+        return '%s\n' % line
+
     def format_code(
         self,
         code_parts,  # type: list[str]
     ):  # type: (...) -> str
+        """Return a formatted representation of a code line.
+
+        Args:
+            code_parts (list of str):
+                The list of components of the code.
+
+        Returns:
+            list of str:
+            The list of formatted lines.
+        """
         return '    %s' % ' '.join(code_parts)
 
     def format_equs(
         self,
         equs,  # type: list[tuple[str, str]]
     ):  # type: (...) -> list[str]
+        """Format equalities/enums/constants.
+
+        Args:
+            equs (list of tuple):
+                The list of values in ``(name, value)`` form.
+
+        Returns:
+            list of str:
+            The list of formatted lines.
+        """
         max_len = max(
             50,
             max(
@@ -1370,6 +1683,22 @@ class TextFileWriter(BaseFileWriter):
         addr,        # type: Address
         is_local,    # type: bool
     ):  # type: (...) -> str
+        """Format a label.
+
+        Args:
+            label_name (str):
+                The name of the label.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address of the line.
+
+            is_local (bool):
+                Whether this is a local label within a parent context.
+
+        Returns:
+            str:
+            The formatted line.
+        """
         if is_local:
             return '  %s:' % label_name
         else:
@@ -1379,6 +1708,16 @@ class TextFileWriter(BaseFileWriter):
         self,
         m,  # type: re.Match
     ):  # type: (...) -> str
+        """Process a template variable in a line.
+
+        Args:
+            m (re.Match):
+                The match result found in the string.
+
+        Returns:
+            str:
+            The value to populate where matched.
+        """
         if m.group('type') == 'SYMBOL':
             return m.group('value').split('::', 1)[1]
 
@@ -1386,8 +1725,11 @@ class TextFileWriter(BaseFileWriter):
 
 
 class HTMLString(unicode):
+    """An HTML-safe string."""
+
     __slots__ = ()
 
+    #: Mark this as HTML, for introspection.
     is_html = True
 
     def __unicode__(self):
@@ -1398,6 +1740,20 @@ class HTMLString(unicode):
 
 
 class HTMLFileWriter(BaseFileWriter):
+    """Writer for assembly HTML files.
+
+    This provides basic functionality for writing the components of lines
+    and statements for an output format.
+
+    References are linked together using anchors and hyperlinks, making it
+    easy to navigate through the file.
+
+    Syntax highlighting is used to help visually distinguish parts of the
+    page.
+
+    The writer must be opened before any content can be written.
+    """
+
     ext = 'html'
     dirname = 'html'
 
@@ -1541,6 +1897,13 @@ class HTMLFileWriter(BaseFileWriter):
 
     @contextmanager
     def open(self):  # typing.Generator
+        """Open the file for writing.
+
+        This will display progress and begin opening the file for writing.
+
+        Context:
+            The file will be opened for writing.
+        """
         with super(HTMLFileWriter, self).open():
             fp = self.fp
             assert fp is not None
@@ -1577,6 +1940,7 @@ class HTMLFileWriter(BaseFileWriter):
             )
 
     def new_code_unit(self):  # type: (...) -> None
+        """Prepare for a new code unit."""
         fp = self.fp
         assert fp is not None
 
@@ -1587,6 +1951,15 @@ class HTMLFileWriter(BaseFileWriter):
         name,  # type: str
         addr,  # type: Address
     ):  # type: (...) -> None
+        """Write an anchor to the file.
+
+        Args:
+            name (str):
+                The name of the anchor.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address of the anchor.
+        """
         fp = self.fp
         assert fp is not None
 
@@ -1600,6 +1973,18 @@ class HTMLFileWriter(BaseFileWriter):
         addr,         # type: Address
         eol_comment,  # type: str | None
     ):  # type: (...) -> None
+        """Write a line with an end-of-line comment.
+
+        Args:
+            lines (str):
+                The line to write.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address of the line.
+
+            eol_comment (str):
+                The commemnt to add to the end of the line.
+        """
         if eol_comment:
             self.write_line(
                 HTMLString(
@@ -1619,6 +2004,21 @@ class HTMLFileWriter(BaseFileWriter):
         indent,            # type: str
         use_plate_syntax,  # type: bool
     ):  # type: (...) -> None
+        """Write one or more comment lines.
+
+        Args:
+            lines (list of str):
+                The list of lines to write.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address the comment corresponds to.
+
+            indent (str, optional):
+                Any indentation to provide before the comment.
+
+            use_plate_syntax (bool, optional):
+                Whether to output using plate syntax.
+        """
         fp = self.fp
         assert fp is not None
 
@@ -1640,6 +2040,12 @@ class HTMLFileWriter(BaseFileWriter):
         self,
         equs,       # type: list[tuple[str, str]]
     ):  # type: (...) -> None
+        """Write equality/enums/constants.
+
+        Args:
+            equs (list of tuple):
+                The list of values in ``(name, value)`` form.
+        """
         fp = self.fp
         assert fp is not None
 
@@ -1652,6 +2058,19 @@ class HTMLFileWriter(BaseFileWriter):
         line,  # type: str
         addr,  # type: Address | None
     ):  # type: (...) -> str
+        """Return a formatted representation of an arbitrary line.
+
+        Args:
+            line (str):
+                The line to format.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address of the line.
+
+        Returns:
+            str:
+            The formatted line.
+        """
         if addr is None:
             anchor = ''
         else:
@@ -1670,6 +2089,16 @@ class HTMLFileWriter(BaseFileWriter):
         self,
         code_parts,  # type: list[str]
     ):  # type: (...) -> str
+        """Return a formatted representation of a code line.
+
+        Args:
+            code_parts (list of str):
+                The list of components of the code.
+
+        Returns:
+            list of str:
+            The list of formatted lines.
+        """
         result = '<span class="i">%s</span>' % self._escape(code_parts[0])
 
         if len(code_parts) > 1:
@@ -1690,6 +2119,16 @@ class HTMLFileWriter(BaseFileWriter):
         self,
         equs,  # type: list[tuple[str, str]]
     ):  # type: (...) -> list[str]
+        """Format equalities/enums/constants.
+
+        Args:
+            equs (list of tuple):
+                The list of values in ``(name, value)`` form.
+
+        Returns:
+            list of str:
+            The list of formatted lines.
+        """
         return [
             HTMLString(
                 '<div class="n">%s</div> '
@@ -1710,6 +2149,22 @@ class HTMLFileWriter(BaseFileWriter):
         addr,        # type: Address
         is_local,    # type: bool
     ):  # type: (...) -> str
+        """Format a label.
+
+        Args:
+            label_name (str):
+                The name of the label.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address of the line.
+
+            is_local (bool):
+                Whether this is a local label within a parent context.
+
+        Returns:
+            str:
+            The formatted line.
+        """
         if is_local:
             cssclass = 'lla'
         else:
@@ -1726,13 +2181,35 @@ class HTMLFileWriter(BaseFileWriter):
         self,
         line,  # type: str
     ):  # type: (...) -> str
-        return HTMLString(self.TEMPLATE_RE.sub(self.process_template_var,
-                                               line))
+        """Process the contents of a line.
+
+        This defaults to processing any template strings, using
+        :py:meth:`process_template_var` for any that are found.
+
+        Args:
+            line (str):
+                The line to process.
+
+        Returns:
+            str:
+            The resulting line.
+        """
+        return HTMLString(super(HTMLFileWriter, self).process_line(line))
 
     def process_template_var(
         self,
         m,  # type: re.Match
     ):  # type: (...) -> str
+        """Process a template variable in a line.
+
+        Args:
+            m (re.Match):
+                The match result found in the string.
+
+        Returns:
+            str:
+            The value to populate where matched.
+        """
         if m.group('type') == 'SYMBOL':
             value = m.group('value')
 
@@ -1751,6 +2228,20 @@ class HTMLFileWriter(BaseFileWriter):
         self,
         text,  # type: str
     ):  # type: (...) -> HTMLString
+        """Return the content with HTML-sensitive characters escaped.
+
+        If the provided string is already HTML-safe, it will be returned
+        as-is. Otherwise, ``<``, ``>``, and ``&`` characters will be
+        escaped.
+
+        Args:
+            text (str):
+                The string to escape.
+
+        Returns:
+            str:
+            The resulting string.
+        """
         if hasattr(text, 'is_html'):
             return text
 
@@ -1791,11 +2282,26 @@ class HTMLFileWriter(BaseFileWriter):
 
 
 class MultiFileWriter(BaseFileWriter):
+    """Writer for writing simultaneously to assembly and HTML files.
+
+    This will pass all writing operations to both writers, efficiently
+    generating both at the same time.
+    """
+
     def __init__(
         self,
         *args,
         **kwargs
     ):  # type: (...) -> None
+        """Initialize the writer.
+
+        Args:
+            *args (tuple):
+                Positional arguments to pass to both writers.
+
+            **kwargs (dict):
+                Keyword arguments to pass to both writers.
+        """
         super(MultiFileWriter, self).__init__(*args, **kwargs)
 
         self.asm_writer = TextFileWriter(*args, **kwargs)
