@@ -6,11 +6,36 @@
 
 from __future__ import unicode_literals
 
+TYPE_CHECKING = False
+
+if 0:
+    import typing
+    from typing import Any, Callable, Mapping, TYPE_CHECKING
+
 import os
 import re
 import textwrap
 import string
 from contextlib import contextmanager
+from functools import partial
+
+try:
+    from functools import partialmethod
+except ImportError:
+    if TYPE_CHECKING:
+        assert False
+    else:
+        class partialmethod(object):
+            def __init__(self, func, *args, **kwargs):
+                self.func = func
+                self.args = args
+                self.kwargs = kwargs
+
+            def __get__(self, obj, cls):
+                if obj is None:
+                    return self
+
+                return partial(self.func, obj, *self.args, **self.kwargs)
 
 from ghidra.program.model.address import (
     Address,
@@ -44,10 +69,6 @@ from ghidra.program.model.symbol import (
     Symbol,
     SymbolType,
 )
-
-if 0:
-    import typing
-    from typing import Any, Callable, Mapping
 
 
 ###########################################################################
@@ -1782,89 +1803,47 @@ class MultiFileWriter(BaseFileWriter):
 
     @contextmanager
     def open(self):  # typing.Generator
+        """Open both writers for writing.
+
+        Context:
+            The files will be opened for writing.
+        """
         with self.asm_writer.open():
             with self.html_writer.open():
                 yield
 
-    def new_code_unit(
+    def _call_writers(
         self,
+        func_name,  # type: str
         *args,
         **kwargs
     ):  # type: (...) -> None
-        self.asm_writer.new_code_unit(*args, **kwargs)
-        self.html_writer.new_code_unit(*args, **kwargs)
+        """Pass a call to both writers.
 
-    def write_anchor(
-        self,
-        *args,
-        **kwargs
-    ):  # type: (...) -> None
-        self.asm_writer.write_anchor(*args, **kwargs)
-        self.html_writer.write_anchor(*args, **kwargs)
+        Args:
+            func_name (str):
+                The function name to call.
 
-    def write_line(
-        self,
-        *args,
-        **kwargs
-    ):  # type: (...) -> None
-        self.asm_writer.write_line(*args, **kwargs)
-        self.html_writer.write_line(*args, **kwargs)
+            *args (tuple):
+                Positional arguments to pass.
 
-    def write_lines(
-        self,
-        *args,
-        **kwargs
-    ):  # type: (...) -> None
-        self.asm_writer.write_lines(*args, **kwargs)
-        self.html_writer.write_lines(*args, **kwargs)
+            **kwargs (dict):
+                Keyword arguments to pass.
+        """
+        getattr(self.asm_writer, func_name)(*args, **kwargs)
+        getattr(self.html_writer, func_name)(*args, **kwargs)
 
-    def write_line_with_eol_comment(
-        self,
-        *args,
-        **kwargs
-    ):  # type: (...) -> None
-        self.asm_writer.write_line_with_eol_comment(*args, **kwargs)
-        self.html_writer.write_line_with_eol_comment(*args, **kwargs)
-
-    def write_blank_line(
-        self,
-        *args,
-        **kwargs
-    ):  # type: (...) -> None
-        self.asm_writer.write_blank_line(*args, **kwargs)
-        self.html_writer.write_blank_line(*args, **kwargs)
-
-    def write_code(
-        self,
-        *args,
-        **kwargs
-    ):  # type: (...) -> None
-        self.asm_writer.write_code(*args, **kwargs)
-        self.html_writer.write_code(*args, **kwargs)
-
-    def write_equs(
-        self,
-        *args,
-        **kwargs
-    ):  # type: (...) -> None
-        self.asm_writer.write_equs(*args, **kwargs)
-        self.html_writer.write_equs(*args, **kwargs)
-
-    def write_comment(
-        self,
-        *args,
-        **kwargs
-    ):  # type: (...) -> None
-        self.asm_writer.write_comment(*args, **kwargs)
-        self.html_writer.write_comment(*args, **kwargs)
-
-    def write_label(
-        self,
-        *args,
-        **kwargs
-    ):  # type: (...) -> None
-        self.asm_writer.write_label(*args, **kwargs)
-        self.html_writer.write_label(*args, **kwargs)
+    new_code_unit = partialmethod(_call_writers, 'new_code_unit')
+    write_anchor = partialmethod(_call_writers, 'write_anchor')
+    write_blank_line = partialmethod(_call_writers, 'write_blank_line')
+    write_code = partialmethod(_call_writers, 'write_code')
+    write_comment = partialmethod(_call_writers, 'write_comment')
+    write_equs = partialmethod(_call_writers, 'write_equs')
+    write_label = partialmethod(_call_writers, 'write_label')
+    write_line = partialmethod(_call_writers, 'write_line')
+    write_line_with_eol_comment = partialmethod(_call_writers,
+                                                'write_line_with_eol_comment')
+    write_lines = partialmethod(_call_writers, 'write_lines')
 
 
 ###########################################################################
