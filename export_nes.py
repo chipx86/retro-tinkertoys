@@ -3951,44 +3951,45 @@ class Exporter:
 
     def get_labels_at_addr(
         self,
-        addr,  # type: Program
+        addr,  # type: Address
     ):  # type: (...) -> list[str]
-        labels_cache = self.labels_cache
-        addr_str = str(addr).lower()
+        """Return all labels for a given address.
 
-        try:
-            return labels_cache[addr_str]
-        except KeyError:
-            pass
+        This will look for all user-created labels or function names that
+        identify the given address, returning each result as a sorted list.
 
+        Args:
+            addr (ghidra.program.model.address.Address):
+                The address to use for the search.
+
+        Returns:
+            list of str:
+            Each label name at the address.
+        """
         symbols = self.symbol_table.getSymbols(addr)
         instruction = self.listing.getInstructionAt(addr)
         new_labels = set()
 
         for symbol in symbols:
-            symbol_name = symbol.getName()
             symbol_type = symbol.getSymbolType()
-            is_user_symbol = (symbol.getSource() != 0)
-            include_colon = False
 
-            if symbol_type == SymbolType.FUNCTION:
-                include_colon = True
-            elif is_user_symbol and symbol_type == SymbolType.LABEL:
-                include_colon = (instruction is not None and
-                                 instruction.getAddress().equals(addr))
+            found = (
+                symbol_type == SymbolType.FUNCTION or
+                (symbol_type == SymbolType.LABEL and
+                 symbol.getSource() != 0 and
+                 instruction is not None and
+                 instruction.getAddress().equals(addr))
+            )
 
-            if include_colon and symbol_name not in labels_cache:
-                new_labels.add(self.sanitize_label_name(symbol_name))
+            if found:
+                new_labels.add(self.sanitize_label_name(symbol.getName()))
 
         new_labels.update(
             symbol[1]
             for symbol in self.find_symbols_for_address(addr)
         )
 
-        result = sorted(new_labels)
-        labels_cache[addr_str] = result
-
-        return result
+        return sorted(new_labels)
 
 
 def main():
