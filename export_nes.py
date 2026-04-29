@@ -61,6 +61,7 @@ from ghidra.program.model.listing import (
     Instruction,
     Program,
 )
+from ghidra.program.model.mem import MemoryBlock
 from ghidra.program.model.scalar import Scalar
 from ghidra.program.model.symbol import (
     OffsetReference,
@@ -2357,11 +2358,28 @@ class MultiFileWriter(BaseFileWriter):
 ###########################################################################
 
 class BlockExporter:
+    """Exporter that processes a block's code and data and writes it to files.
+
+    This will write a file representing a block (generally a bank), including
+    all of its code and data. Those will be written in a clean form that
+    includes provided or default comments for functions and data, and to
+    include links to symbols wherever they're referenced.
+    """
+
     def __init__(
         self,
-        block,     # type: Block
+        block,     # type: MemoryBlock
         exporter,  # type: Exporter
     ):  # type: (...) -> None
+        """Initialize the exporter.
+
+        Args:
+            block (ghidra.program.model.mem.MemoryBlock):
+                The block being exported.
+
+            exporter (Exporter):
+                The main program exporter.
+        """
         self.block = block
         self.block_name = block.getName()
         self.exporter = exporter
@@ -2373,6 +2391,12 @@ class BlockExporter:
         self,
         writer,  # type: BaseFileWriter
     ):  # type: (...) -> None
+        """Export the block to a writer.
+
+        Args:
+            writer (BaseFileWriter):
+                The writer to write to.
+        """
         block = self.block
         exporter = self.exporter
 
@@ -2383,9 +2407,11 @@ class BlockExporter:
         norm_start_addr = exporter.normalize_address(start_addr)
         norm_end_addr = exporter.normalize_address(end_addr)
 
-        bytes_writer = BytesWriter(writer)
-        self.bytes_writer = bytes_writer
+        assert norm_start_addr
 
+        self.bytes_writer = BytesWriter(writer)
+
+        # Write the comment at the top of the file.
         writer.write_comment(
             comment=(
                 '{program}\n'
@@ -2402,21 +2428,22 @@ class BlockExporter:
         )
         writer.write_blank_line()
 
-        assert norm_start_addr
-
+        # Write any instructions needed to set up the bank's address.
         for line in asm_mode.get_bank_start_lines(block_name=block_name,
                                                   start_addr=norm_start_addr):
             writer.write_code([line], addr=None)
 
         writer.write_blank_line()
 
+        # Walk the address space of the block, exporting lines for each
+        # address.
         cur_addr = start_addr
 
         while cur_addr is not None and cur_addr.compareTo(end_addr) <= 0:
             processed_len = self.export_addr(
                 addr=cur_addr,
-                bytes_writer=bytes_writer,
-                writer=writer)
+                writer=writer,
+            )
 
             if processed_len <= 0:
                 processed_len = 1
@@ -2437,22 +2464,41 @@ class BlockExporter:
                 print(e)
                 cur_addr = None
 
+        # Flush any remaining bytes to the file.
         self.bytes_writer.flush()
 
     def export_addr(
         self,
         addr,          # type: Address
-        bytes_writer,  # type: BytesWriter
         writer,        # type: BaseFileWriter
     ):  # type: (...) -> int
+        """Export lines for an address.
+
+        This will export the code or data for the given address to the writer.
+
+        Args:
+            addr (ghidra.program.model.address.Address):
+                The address to export.
+
+            writer (BaseFileWriter):
+                The writer to use for the export.
+
+        Returns:
+            int:
+            The number of bytes processed starting at this address.
+        """
         code_unit = self.exporter.listing.getCodeUnitAt(addr)
 
         if isinstance(code_unit, Instruction):
+            # Export the instruction at this address.
             processed_len = self.export_instruction(code_unit, addr, writer)
         elif isinstance(code_unit, Data):
+            # Export the sequence of data.
             processed_len = self.export_data(code_unit, addr, writer)
         else:
-            self.bytes_writer.append(exporter.memory.getByte(addr))
+            # This isn't an instruction or defined data. Export it as just
+            # a single byte.
+            self.bytes_writer.append(self.exporter.memory.getByte(addr))
             processed_len = 1
 
         return processed_len
@@ -2463,13 +2509,31 @@ class BlockExporter:
         addr,       # type: Address
         writer      # type: BaseFileWriter
     ):  # type: (...) -> int
+        """Export a line for an instruction.
+
+        Args:
+            code_unit (ghidra.program.model.listing.CodeUnit):
+                The code unit to export.
+
+            addr (ghidra.program.model.address.Address):
+                The address to export.
+
+            writer (BaseFileWriter):
+                The writer to use for the export.
+
+        Returns:
+            int:
+            The number of bytes processed starting at this address.
+        """
         assert addr == code_unit.getAddress()
 
         exporter = self.exporter
         listing = exporter.listing
 
+        # If there are any bytes in the buffer, flush them first.
         self.bytes_writer.flush()
 
+        # Export any labels and comments preceding this address.
         self.export_labels_and_comments(addr, writer, is_inner=True)
 
         # Generate the human-readable instruction.
@@ -2495,6 +2559,22 @@ class BlockExporter:
         addr,       # type: Address
         writer,     # type: BaseFileWriter
     ):  # type: (...) -> int
+        """Export a line for a sequence of data.
+
+        Args:
+            code_unit (ghidra.program.model.listing.CodeUnit):
+                The code unit representing the data.
+
+            addr (ghidra.program.model.address.Address):
+                The address to export.
+
+            writer (BaseFileWriter):
+                The writer to use for the export.
+
+        Returns:
+            int:
+            The number of bytes processed starting at this address.
+        """
         data = self.exporter.listing.getDataContaining(addr)
 
         return self.export_data_tree(data or code_unit, writer)
@@ -2505,16 +2585,33 @@ class BlockExporter:
         writer,         # type: BaseFileWriter
         is_inner=False  # type: bool
     ):  # type: (...) -> dict[str, Any] | None
+        """Export labels and comments for an address.
+
+        Args:
+            addr (ghidra.program.model.address.Address):
+                The address to export.
+
+            writer (BaseFileWriter):
+                The writer to use for the export.
+
+            is_inner (bool, optional):
+                Whether to display this within an existing function.
+
+        Returns:
+            dict:
+            Information on the labels and comments for this address.
+        """
         exporter = self.exporter
         listing = exporter.listing
 
-        # Output any plate comment.
+        # Fetch any existing comments and labels for this address.
         plate_comment = listing.getComment(CodeUnit.PLATE_COMMENT, addr)
         pre_comment = listing.getComment(CodeUnit.PRE_COMMENT, addr)
         pending_labels = exporter.get_labels_at_addr(addr)
         func = exporter.func_manager.getFunctionAt(addr)
 
         if plate_comment or pre_comment or pending_labels:
+            # There's something to show here, so flush any pending bytes.
             self.bytes_writer.flush()
 
         if is_inner:
@@ -2522,6 +2619,7 @@ class BlockExporter:
         else:
             pre_comment_indent = ''
 
+        # Write blank lines preceding any content.
         if plate_comment or (func is None and pre_comment):
             writer.write_blank_line(count=2)
         elif pending_labels and not plate_comment and not pre_comment:
@@ -2588,6 +2686,7 @@ class BlockExporter:
                                 leading_blank=0)
 
         if not plate_comment and not pre_comment and not pending_labels:
+            # There was nothing to write, so just return None.
             return None
 
         return {
@@ -2604,6 +2703,27 @@ class BlockExporter:
         leading_blank=1,        # type: int
         use_plate_syntax=False  # type: bool
     ):  # type: (...) -> None
+        """Export a comment to the writer.
+
+        Args:
+            comment (str):
+                The comment to write.
+
+            writer (BaseFileWriter):
+                The writer to use for the export.
+
+            indent (str, optional):
+                Any leading indentation for the comment.
+
+            indent (str, optional):
+                Any indentation to provide before the comment.
+
+            leading_blank (int, optional):
+                The leading number of blank lines before this comment.
+
+            use_plate_syntax (bool, optional):
+                Whether to output using plate syntax.
+        """
         if not comment or not comment.strip():
             return
 
@@ -2623,13 +2743,27 @@ class BlockExporter:
         addr,       # type: Address
         writer,     # type: BaseFileWriter
     ):  # type: (...) -> tuple[list[str], list[str]]
+        """Generate an instruction and operands for a code unit.
+
+        Args:
+            code_unit (ghidra.program.model.listing.CodeUnit):
+                The code unit representing the instruction and operands.
+
+            addr (ghidra.program.model.address.Address):
+                The address to export.
+
+            writer (BaseFileWriter):
+                The writer to use for the export.
+        """
         exporter = self.exporter
 
+        # Generate raw bytes for the instructions.
         raw_instruction_bytes = [
             b & 0xFF
             for b in code_unit.getBytes()
         ]
 
+        # Format those for output.
         instruction_bytes = [
             '{:02x}'.format(b)
             for b in raw_instruction_bytes
@@ -2695,24 +2829,46 @@ class BlockExporter:
         self,
         op_rep,       # type: str
     ):  # type: (...) -> str
+        """Normalize the addressing for an operand.
+
+        This will check the addressing mode of an operand. If it's absolute
+        or indirect, it will take the address and try to convert it into a
+        symbol. Any prefixes or suffixes on the operand will then be restored.
+
+        Args:
+            op_rep (str):
+                The representation of the operand.
+
+        Returns:
+            str:
+            The normalized operand with proper addressing.
+        """
         is_abs = ABSOLUTE_MATCH.match(op_rep)
         m = is_abs or INDIRECT_MATCH.match(op_rep)
 
         if not m:
+            # This is not using absolute or indirect addressing. Just
+            # do routine template reference normalization and return.
             return self.normalize_ref(op_rep)
 
+        # Extract state for the operand.
         prefix = m.groupdict().get('prefix', '')
         suffix = (m.group('suffix') or '').upper()
         addr = m.group('addr')
 
         if addr.startswith('0x'):
+            # This is a hex address. Ensure we have a 4-byte value (padding
+            # if necessary).
             addr = addr[2:]
 
             if len(addr) < 4:
                 addr = addr.rjust(4, '0')
 
+            # Find any possible reference pointing to this address. If one
+            # is found, use that symbol's name.
             addr = self.get_ref_to_addr(addr)
 
+        # Normalize the reference to a symbol template, if needed.
         addr = self.normalize_ref(addr)
 
         return '%s%s%s' % (prefix, addr, suffix)
@@ -2721,6 +2877,19 @@ class BlockExporter:
         self,
         comment,  # type: str | None
     ):  # type: (...) -> str | None
+        """Process a comment.
+
+        This will convert any Ghidra symbol references in a comment to
+        symbol placeholder used by this disassembler.
+
+        Args:
+            comment (str):
+                The comment to process.
+
+        Returns:
+            str:
+            The processed comment.
+        """
         if not comment:
             return comment
 
@@ -2766,6 +2935,19 @@ class BlockExporter:
         self,
         addr,  # type: Address
     ):  # type: (...) -> str | None
+        """Return a normalized reference from a given address.
+
+        If the address maps to a symbol, it will be normalized into a
+        symbol placeholder.
+
+        Args:
+            addr (ghidra.program.model.address.Address):
+                The address.
+
+        Returns:
+            str:
+            The normalized reference to a symbol, or ``None`` if not found.
+        """
         exporter = self.exporter
         symbol = None
         refs = exporter.ref_manager.getReferencesFrom(addr)
@@ -2774,12 +2956,14 @@ class BlockExporter:
             assert len(refs) == 1
 
             symbol = exporter.symbol_table.getPrimarySymbol(
-                refs[0].getToAddress())
+                refs[0].getToAddress(),
+            )
 
             if symbol:
                 return self.normalize_ref(
                     symbol.getName(True),
-                    exporter.get_block_name_for_addr(addr))
+                    exporter.get_block_name_for_addr(addr),
+                )
 
         return None
 
@@ -2787,6 +2971,26 @@ class BlockExporter:
         self,
         addr_str,  # type: str
     ):  # type: (...) -> str
+        """Return a normalized reference to a given address string.
+
+        This will take a string representing an address (in ``<addr>`` or
+        ``<block>::<addr>`` form) and attempt to find a symbol at that
+        address. If found, it will be normalized as a symbol placeholder.
+        If not, it will be formatted as a standard representation of an
+        address.
+
+        If the string does not include a block, the current block will be
+        used.
+
+        Args:
+            addr_str (str):
+                The string representation of the address.
+
+        Returns:
+            str:
+            The normalized symbol placeholder or string address
+            representation.
+        """
         addr = None             # type: Address | None
         fallback_symbol = None  # type: tuple | None
         sanitized_symbol = None
@@ -2796,11 +3000,15 @@ class BlockExporter:
         norm_addrs = [(norm_addr_str, 0)]
 
         if '::' not in norm_addr_str:
+            # The address doesn't include a block, so consider one relative
+            # to the current block.
             norm_addrs.append((
                 '%s::%s' % (self.block_name.lower(), norm_addr_str),
                 0,
             ))
 
+        # Go through the candidates, validate them, and ensure a consistent
+        # address format for each.
         for norm_addr, offset in list(norm_addrs):
             parts = norm_addr.split(':')
 
@@ -2814,6 +3022,7 @@ class BlockExporter:
                 1,
             ))
 
+        # Go through the normalized candidates and look for any symbols.
         for norm_addr, offset in norm_addrs:
             if norm_addr:
                 fallback_symbol = (
@@ -2829,22 +3038,24 @@ class BlockExporter:
                             exporter.find_symbol_for_address(addr)
 
                 if fallback_symbol:
+                    # A symbol was found. Store the information on it and
+                    # break out of the loop.
                     sanitized_symbol = (
                         fallback_symbol[0],
                         exporter.sanitize_label_name(fallback_symbol[1]),
                     )
-                else:
-                    sanitized_symbol = None
-
-                if sanitized_symbol:
                     sanitized_symbol_offset = offset
                     break
 
         if sanitized_symbol:
+            # We found a symbol above. Normalize the reference to the
+            # symbol.
             ref = self.normalize_ref(sanitized_symbol[1],
                                      sanitized_symbol[0],
                                      offset=sanitized_symbol_offset)
         else:
+            # A symbol was not found. Instead, parse the address and create
+            # a suitable representation.
             norm_addr = norm_addr_str
 
             if ADDR_RE.match(norm_addr):
@@ -2863,24 +3074,60 @@ class BlockExporter:
         block_name=None,  # type: str | None
         offset=0,         # type: int
     ):  # type: (...) -> str
+        """Normalize a string representation to an address.
+
+        This will take a reference name and compute either a symbol placeholder
+        for it or return it as-is.
+
+        If a block name is provided or can be inferred, a symbol placeholder
+        will be used, allowing it to be resolved and linked to when writing.
+        If one can't be found, it will be returned roughly as-is.
+
+        This will also take care of applying any offset to the address. As
+        a bit of a hack, if the symbol ends with ``_1`` (which Ghidra will
+        sometimes do), an offset of 1 will be inferred.
+
+        Args:
+            ref (str):
+                The reference to normalize.
+
+            block_name (str, optional):
+                The block name, if known. If not provided, one will be
+                inferred if possible.
+
+            offset (int, optional):
+                An explicit offset to apply.
+
+        Returns:
+            str:
+            The normalized symbol placeholder or provided reference, with
+            an offset as needed.
+        """
         if ref.startswith('{{@SYMBOL:'):
             return ref
 
         suffix = ''
 
         if ref.endswith('_1'):
+            # This appears to be an offset of one, based on Ghidra's naming.
+            # Strip that suffix and apply the offset.
             ref = ref[:-2]
             suffix = '+1'
         else:
             suffix = self._format_dest_offset(offset)
 
         if block_name is None:
+            # Look for a block name for this reference by trying to find a
+            # symbol.
             symbol = self.exporter.find_symbol_for_address(ref)
 
             if symbol is not None:
+                # One was found, so use its block name.
                 block_name = symbol[0]
 
         if block_name is not None:
+            # A block name was found, so we can build a symbol placeholder
+            # for later processing.
             ref = (
                 '{{@SYMBOL:%s::%s@}}'
                 % (block_name, ref)
@@ -2894,6 +3141,33 @@ class BlockExporter:
         writer,           # type: BaseFileWriter
         index_path=None,  # type: list[int] | None
     ):  # type: (...) -> int
+        """Export a whole data tree.
+
+        This will export a data tree, which may be an array, structure,
+        union, or range of bytes.
+
+        Nested arrays and structures are supported.
+
+        Values will be normalized to the right representation for the
+        inferred data types.
+
+        Args:
+            data (ghidra.program.model.listing.Data):
+                The data tree to export.
+
+            writer (BaseFileWriter):
+                The writer to export to.
+
+            index_path (list of int, optional):
+                The index path for nested arrays or structures.
+
+                Each entry will represent a layer in the nesting, using
+                the index of each item in the tree.
+
+        Returns:
+            int:
+            The length of the data written.
+        """
         if index_path is None:
             index_path = []
 
@@ -2904,6 +3178,11 @@ class BlockExporter:
         is_array = isinstance(data_type, Array)
 
         if is_array or isinstance(data_type, (Structure, Union)):
+            # This is an array, structure, or union. This supports nesting.
+            # We'll go through each component of the tree and export each
+            # child, tracking the index of each nested item in the process.
+            #
+            # This will ultimately result in exporting data.
             count = data.getNumComponents()
 
             for i in range(count):
@@ -2918,6 +3197,11 @@ class BlockExporter:
                                       writer=writer,
                                       index_path=new_index_path)
         else:
+            # This is a sequence of bytes. It's the leaf of any tree (of any
+            # length).
+            #
+            # It'll normalize values to the right data type size and encode
+            # them.
             byte_addr = data.getAddress()
             data_type_str = get_data_type_str(data_type)
 
@@ -2933,6 +3217,7 @@ class BlockExporter:
                 data_size = 2
 
                 if block_initialized:
+                    # Normalize each pair of values into words.
                     data_values = [
                         (data_bytes[i] & 0xFF) |
                         ((data_bytes[i + 1] & 0xFF) << 8)
@@ -2952,7 +3237,8 @@ class BlockExporter:
                 size=data_size,
                 writer=writer,
                 addr=byte_addr,
-                index_path=index_path)
+                index_path=index_path,
+            )
 
         return data_len
 
@@ -2966,6 +3252,30 @@ class BlockExporter:
         addr,           # type: Address
         index_path,     # type: list[int]
     ):  # type: (...) -> None
+        """Encode and export a sequence of bytes.
+
+        Args:
+            data_values (list of int):
+                The list of values to encode
+
+            data_type (ghidra.program.model.data.DataType):
+                The type of the data to encode.
+
+            data_type_str (str):
+                The string representation of the data type.
+
+            size (int):
+                The size of each value.
+
+            writer (BaseFileWriter):
+                The writer to export to.
+
+            addr (ghidra.program.model.address.Address):
+                The address of the first byte in the sequence.
+
+            index_path (list of int):
+                The path of indexes for nested arrays/structures.
+        """
         assert data_values
 
         exporter = self.exporter
@@ -2973,10 +3283,15 @@ class BlockExporter:
 
         bytes_writer = self.bytes_writer
         end_addr = self.end_addr
-        check_jump_tables = data_type_str in REF_DATA_TYPES
         code_op = None  # type: str | None
 
+        # If the data type is a reference, perform special checks to
+        # resolve values as symbols.
+        check_jump_tables = data_type_str in REF_DATA_TYPES
+
         if check_jump_tables:
+            # Determine what assembly directive we want to represent
+            # this data type for the reference.
             if data_type_str in WORD_DATA_TYPES:
                 code_op = (
                     WORD_DATA_TYPES.get(data_type_str) or
@@ -2986,6 +3301,7 @@ class BlockExporter:
                 code_op = asm_mode.CHAR_OP
 
         if index_path and data_type_str != 'char':
+            # Build comments that indicate the nesting level.
             comment_prefix = ''.join(
                 '[%s]: ' % i
                 for i in index_path
@@ -2995,6 +3311,7 @@ class BlockExporter:
             comment_prefix = ''
             default_comment_suffix = data_type_str
 
+        # Begin exporting each value.
         for value_i, value in enumerate(data_values):
             labels_comments = self.export_labels_and_comments(addr, writer)
             labeled = bool(labels_comments)
@@ -3077,9 +3394,11 @@ class BlockExporter:
                     data_type=data_type,
                     size=size,
                     eol_comment=self.process_comment(eol_comment),
-                    labeled=labeled)
+                    labeled=labeled,
+                )
 
             if addr == end_addr:
+                # We're done.
                 break
 
             try:
@@ -3365,7 +3684,22 @@ class BlockExporter:
     def _find_data_target_ref_from(
         self,
         addr,  # type: Address
-    ):  # type: (...) -> Function | None
+    ):  # type: (...) -> Function | Symbol | None
+        """Find any symbols referenced from this address.
+
+        This will look for all references from the provided address and,
+        if found, return them. It explicitly looks for functions and then
+        general symbols.
+
+        Args:
+            addr (ghidra.program.model.address.Address):
+                The address to search.
+
+        Returns:
+            ghidra.program.model.listing.Function or
+            ghidra.program.model.symbol.Symbol:
+            The resulting function or symbol, or ``None`` if not found.
+        """
         exporter = self.exporter
         func_manager = exporter.func_manager
         ref_manager = exporter.ref_manager
@@ -3386,6 +3720,21 @@ class BlockExporter:
         self,
         func,  # type: Function
     ):  # type: (...) -> str
+        """Return a default comment for a function.
+
+        This will generate a default plate comment that can be used for
+        a function that otherwise lacks any function-level documentation.
+        It will include a big TODO, along with any known parameters and
+        outputs.
+
+        Args:
+            func (ghidra.program.model.listing.Function):
+                The function to document.
+
+        Returns:
+            str:
+            The default comment.
+        """
         params = func.getParameters()
         func_return = func.getReturn()
 
@@ -3428,6 +3777,23 @@ class BlockExporter:
         comment,  # type: str
         addr,     # type: Address
     ):  # type: (...) -> str
+        """Add cross-references for an address to a comment.
+
+        This takes the address and looks for anything that references that
+        address. All references will be appended to the given comment as an
+        ``XREFS`` section.
+
+        Args:
+            comment (str):
+                The comment to append to.
+
+            addr (ghidra.program.model.address.Address):
+                The address to search for references to.
+
+        Returns:
+            str:
+            The resulting comment.
+        """
         xrefs = set()  # type: set[str]
         exporter = self.exporter
         listing = exporter.listing
@@ -3435,6 +3801,9 @@ class BlockExporter:
         refs_to_addr = self.exporter.ref_manager.getReferencesTo(addr)
 
         if refs_to_addr:
+            # There are references to the address. Loop through them and
+            # try to find out what each reference is and how it should be
+            # represented.
             for ref in refs_to_addr:
                 if not ref.isMemoryReference():
                     continue
@@ -3450,6 +3819,8 @@ class BlockExporter:
                 func = exporter.func_manager.getFunctionContaining(from_addr)
 
                 if func is not None:
+                    # This was a function. Add a placeholder to that function
+                    # to the list of cross-refs.
                     xrefs.add(self.normalize_ref(
                         func.getName(),
                         exporter.get_block_name_for_addr(from_addr)))
@@ -3479,6 +3850,7 @@ class BlockExporter:
                     primary_symbol = symbol_table.getPrimarySymbol(from_addr)
 
                 if primary_symbol is not None:
+                    # A symbol was found. Add it to the list of cross-refs.
                     xrefs.add(
                         '%s [$%s]'
                         % (self.normalize_ref(
@@ -3490,6 +3862,7 @@ class BlockExporter:
                     continue
 
             if xrefs:
+                # Cross-refs were found above. Add them to the comment.
                 comment = '%s\n\nXREFS:\n%s' % (
                     comment,
                     '\n'.join(
@@ -3502,10 +3875,17 @@ class BlockExporter:
 
 
 class Exporter:
+    """The main exporter for the disassembly.
+
+    This loads up information about the program and begins exporting a
+    series of files, documenting the entire ROM.
+    """
+
     def __init__(
         self,
         program,  # type: Program
     ):  # type: (...) -> None
+        """Initialize the exporter."""
         self.program = program
         self.listing = program.getListing()
         self.memory = program.getMemory()
@@ -3519,6 +3899,7 @@ class Exporter:
 
         program_name = program.getName()
 
+        # Strip off junk from the program name that we don't care about.
         if program_name.endswith(' - .ProgramDB'):
             program_name = program_name[:len(' - .ProgramDB')]
 
@@ -3526,7 +3907,6 @@ class Exporter:
 
         self.addr_to_label = {}   # type: dict[str, list[tuple[str, str]]]
         self.addr_to_symbol = {}  # type: dict[str, list[tuple[str, str]]]
-        self.labels_cache = {}    # type: dict[str, list[tuple[str, str]]]
         self.name_to_symbol = {}  # type: dict[str, list[Symbol]]
 
         # Build a mapping of block names to indexes.
@@ -3548,7 +3928,13 @@ class Exporter:
             )
         }
 
-    def export(self):
+    def export(self):  # type: (...) -> None
+        """Export the disassembly to files.
+
+        This will export a general references (table of contents) file,
+        a Mesen labels file, definitions for enums, and then every block
+        (bank) in the disassembly.
+        """
         self.build_symbol_maps()
 
         filename_basepath = '/Users/chipx86/src/faxanadu'
@@ -3564,6 +3950,16 @@ class Exporter:
         self,
         base_path,  # type: str
     ):  # type: (...) -> None
+        """Export a definitions file.
+
+        The definitions file is a table of contents for all symbols,
+        functions, and other meaningful labels in the disassembly, grouped
+        by prefixes (using ``__`` as a delimiter).
+
+        Args:
+            base_path (str):
+                The base path to write files to.
+        """
         writer = MultiFileWriter(base_path=base_path,
                                  block_name='DEFS',
                                  program_name=self.program_name)
@@ -3586,9 +3982,21 @@ class Exporter:
 
     def export_block(
         self,
-        block,      # type: Block
+        block,      # type: MemoryBlock
         base_path,  # type: str
     ):  # type: (...) -> None
+        """Export a block (generally a bank) to a file.
+
+        The exported block will contain all code and data needed to view
+        the disassembly and compile it back into the right memory address.
+
+        Args:
+            block (ghidra.program.model.mem.MemoryBlock):
+                The block to export.
+
+            base_path (str):
+                The base path to write files to.
+        """
         if block.getSize() <= 0:
             return
 
@@ -3614,7 +4022,7 @@ class Exporter:
 
         Args:
             base_path (str):
-                The base path to write to.
+                The base path to write files to.
         """
         mesen_path = os.path.join(base_path, 'mesen')
 
@@ -3691,7 +4099,7 @@ class Exporter:
 
         Args:
             base_path (str):
-                The base path to write to.
+                The base path to write files to.
         """
         program_name = self.program_name
         writer = HTMLFileWriter(base_path=base_path,
@@ -3747,6 +4155,12 @@ class Exporter:
                 ])
 
     def build_symbol_maps(self):  # type: (...) -> None
+        """Build mapping tables for all symbols.
+
+        This will walk all symbols and generate a set of mapping tables that
+        can be used to map addresses to labels or to block and sanitized
+        label names, and to map symbol names to instances.
+        """
         addr_to_label_map = {}   # type: dict[str, list[tuple[str, str]]]
         addr_to_symbol_map = {}  # type: dict[str, list[tuple[str, str]]]
         name_to_symbol_map = {}  # type: dict[str, list[Symbol]]
@@ -3868,6 +4282,32 @@ class Exporter:
         self,
         addr,  # type: Address | str
     ):  # type: (...) -> tuple[str, str] | None
+        """Return symbol information for a given address, if one is found.
+
+        This support an address or a string representation of the address.
+
+        If one is found, the result will be a tuple containing the block name
+        and sanitized label for the symbol.
+
+        If multiple symbols are found, the first will be returned.
+
+        Args:
+            addr (ghidra.program.model.address.Address or str):
+                The address to use for the search.
+
+        Returns:
+            tuple:
+            If a symbol is found, this will be a 2-tuple of:
+
+            Tuple:
+                0 (str):
+                    The block name where the symbol resides.
+
+                1 (str):
+                    The sanitized label for the symbol.
+
+            If one is not found, this will be ``None``.
+        """
         symbols = self.find_symbols_for_address(addr)
 
         if symbols:
@@ -3879,6 +4319,28 @@ class Exporter:
         self,
         addr,  # type: Address | str
     ):  # type: (...) -> list[tuple[str, str]]
+        """Return all symbols for a given address.
+
+        This support an address or a string representation of the address.
+
+        Any that are found will be returned in a list of tuples, each
+        containing the block name and sanitized label for the symbol.
+
+        Args:
+            addr (ghidra.program.model.address.Address or str):
+                The address to use for the search.
+
+        Returns:
+            list of tuple:
+            Each symbol that's found, as a 2-tuple of:
+
+            Tuple:
+                0 (str):
+                    The block name where the symbol resides.
+
+                1 (str):
+                    The sanitized label for the symbol.
+        """
         if isinstance(addr, (str, unicode)):
             if not SYMBOL_RE.match(addr):
                 return []
@@ -3900,18 +4362,17 @@ class Exporter:
         result += self.addr_to_label.get(addr_str, [])
         result += self.addr_to_symbol.get(addr_str, [])
 
-        if 1:
-            for symbol in symbols:
-                symbol_info = (
-                    self.get_block_name_for_addr(symbol.getAddress()),
-                    self.sanitize_label_name(symbol.getName()),
-                )
+        for symbol in symbols:
+            symbol_info = (
+                self.get_block_name_for_addr(symbol.getAddress()),
+                self.sanitize_label_name(symbol.getName()),
+            )
 
-                if (symbol.getSource() != 0 and
-                    symbol.getSymbolType() == SymbolType.LABEL):
-                    result.append(symbol_info)
-                else:
-                    remaining_result.append(symbol_info)
+            if (symbol.getSource() != 0 and
+                symbol.getSymbolType() == SymbolType.LABEL):
+                result.append(symbol_info)
+            else:
+                remaining_result.append(symbol_info)
 
         result += remaining_result
 
