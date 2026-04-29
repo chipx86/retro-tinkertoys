@@ -3793,15 +3793,31 @@ class Exporter:
         self.addr_to_symbol = addr_to_symbol_map
         self.name_to_symbol = name_to_symbol_map
 
-    def normalize_address(self, addr, block_name=''):
+    def normalize_address(
+        self,
+        addr,           # type: Address
+    ):  # type: (...) -> str | None
+        """Normalize an address to a string.
+
+        This will take an address and optional block name and turn it into
+        a normalized address string representation.
+
+        Args:
+            addr (ghidra.program.model.address.Address):
+                The address to normalize.
+
+        Returns:
+            str:
+            The normalized string representation of the address.
+        """
         if not addr or not isinstance(addr, Address):
             return None
 
-        return self.normalize_address_from_string(
-            addr.toString().rsplit(':', 1)[-1],
-            block_name)
+        # Convert the Address to a string representation, stripping any
+        # leading "0x" and ensuring the resulting address is a 4-character
+        # address representation in lowercase.
+        addr_str = str(addr).rsplit(':', 1)[-1]
 
-    def normalize_address_from_string(self, addr_str, block_name=''):
         if addr_str.startswith('0x'):
             addr_str = addr_str[2:]
 
