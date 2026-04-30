@@ -1,8 +1,30 @@
-# -*- coding: utf-8 -*-
 # Ghidra script to export NES 6502 code to files.
+#
+# This takes an NES codebase in Ghidra and exports it to a series of HTML
+# and text files. Files include:
+#
+# * HTML and text for each bank.
+# * An HTML References page (a table of contents of functions/labels).
+# * An enum/constants definitions file.
+# * A Mesen Labels file.
+#
+# Any disassembled code is augmented to include useful default comments for
+# functions, and end-of-line comments for most data types and arrays.
+#
+# The HTML output links references together, making it easy to navigate the
+# codebase.
+#
+# Assembly code is outputted for the ca65 compiler by default, but support is
+# also available for the asm6f compiler.
+#
+# Copyright (C) 2025 Christian Hammond.
+#
+# Licensed under the MIT license.
+
 
 #@menupath Tools.Export NES
 #@category Exporters
+
 
 from __future__ import unicode_literals
 
@@ -3881,6 +3903,12 @@ class Exporter:
     series of files, documenting the entire ROM.
     """
 
+    #: Top-level options name for the any stored settings for the exporter.
+    EXPORTER_OPTIONS_NAME = 'Export NES'
+
+    #: The setting name for the export path.
+    EXPORT_PATH_SETTING = 'export.path'
+
     def __init__(
         self,
         program,  # type: Program
@@ -3937,14 +3965,29 @@ class Exporter:
         """
         self.build_symbol_maps()
 
-        filename_basepath = '/Users/chipx86/src/faxanadu'
+        # Figure out where we're exporting to.
+        #
+        # If this is the first run, the user will be prompted for a path.
+        # That path will be remembered and used for future runs.
+        options = self.program.getOptions(self.EXPORTER_OPTIONS_NAME)
+        export_path = options.getString(self.EXPORT_PATH_SETTING, None)
 
-        self.export_refs_index(filename_basepath)
-        self.export_mesen_labels(filename_basepath)
-        self.export_defs(filename_basepath)
+        if export_path is  None or not os.path.exists(export_path):
+            export_path = askDirectory(
+                ('Where do you want to export to? asm/, html/, and mesen/ '
+                 'directories will be created at this path.'),
+                'Export here',
+            )
+
+            export_path = os.path.abspath(str(export_path))
+            options.setString(self.EXPORT_PATH_SETTING, export_path)
+
+        self.export_refs_index(export_path)
+        self.export_mesen_labels(export_path)
+        self.export_defs(export_path)
 
         for block in self.blocks:
-            self.export_block(block, filename_basepath)
+            self.export_block(block, export_path)
 
     def export_defs(
         self,
