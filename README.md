@@ -32,8 +32,8 @@ To install the Ghidra scripts:
 1. Click **Window** -> **Script Manager**.
 2. Click **Manage Script Directories** in the toolbar (3rd from the right).
 3. Click the Add (green Plus) toolbar button.
-4. Choose the ``ghidra_scripts`` directory in this repository.
-4. In Script Manager, enable the scripts in **Script Manager** ->
+4. Choose the ``ghidra/scripts/`` directory in this repository.
+5. In Script Manager, enable the scripts in **Script Manager** ->
    **Retro Tinkertoys**.
 
 
