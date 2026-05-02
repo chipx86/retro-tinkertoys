@@ -6,7 +6,7 @@ This is a set of scripts I've developed initially to aid in my
 At the moment, this consists of the following Python 2.7 scripts for
 [Ghidra](https://github.com/nationalsecurityagency/ghidra):
 
-* `export_nes.py`: Export annotated assembly files and a hyperlinked HTML
+* `nes_export.py`: Export annotated assembly files and a hyperlinked HTML
   disassembly for NES 6502 code.
 
 * `nes_visualize_ppu_tile.py`: Select a 16 byte NES PPU tile data and generate
@@ -27,9 +27,9 @@ To install the Ghidra scripts:
 See below for how to use each script:
 
 
-## `export_nes.py`
+## `nes_export.py`
 
-**Menu Item:** Tools -> Export NES
+**Menu Item:** Tools -> NES - Export Disassembly
 
 This takes the disassembled banks for an NES ROM and turns it into:
 

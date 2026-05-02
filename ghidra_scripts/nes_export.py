@@ -1,4 +1,4 @@
-# Ghidra script to export NES 6502 code to files.
+# Export NES code to text and HTML.
 #
 # This takes an NES codebase in Ghidra and exports it to a series of HTML
 # and text files. Files include:
@@ -22,7 +22,8 @@
 # Licensed under the MIT license.
 
 
-#@menupath Tools.Export NES
+#@author Christian Hammond (ChipX86)
+#@menupath Tools.NES - Export Disassembly
 #@category Retro Tinkertoys
 
 
