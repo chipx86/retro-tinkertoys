@@ -21,6 +21,9 @@ At the moment, this consists of the following Python 2.7 scripts for
 * `data_add_ref_with_offset.py`: Add a reference to each value in a selection
   with a given bank and offset.
 
+* `data_search_replace_reffed_labels.py`: Perform a search/replace of text in
+  any label names referenced in a selection.
+
 * `data_update_types.py`: Update the types of data values without losing
   comments or references.
 
@@ -60,7 +63,7 @@ To install the custom Ghidra data types:
 
 ## Scripts Reference
 
-### `data_add_ref_with_offset.py`:
+### `data_add_ref_with_offset.py`
 
 **Menu Item:** Tools → Data - Add Reference with Offset
 
@@ -72,7 +75,26 @@ This can help with annotating documentation and generating a useful
 disassembly.
 
 
-### `data_update_types.py`:
+### `data_search_replace_reffed_labels.py`
+
+**Menu Item:** Tools → Data - Search/Replace Reffed Labels
+
+Perform a search/replace of text in the names of any references in a selection.
+
+This will take a selected range of code, ask for the text to search for and to
+replace it with, and then update the names of any referencs found in that
+selection accordingly.
+
+The text can be matched in case-sensitive or case-insensitive form.
+
+A dry-run can be performed, showing what renames would be performed, which can
+help with testing the results of the search/replace without risking anything
+beind modified.
+
+This all occurs in a transaction, so it's easy to undo.
+
+
+### `data_update_types.py`
 
 **Menu Item:** Tools → Data - Update Types
 
