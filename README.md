@@ -6,6 +6,15 @@ This is a set of scripts I've developed initially to aid in my
 At the moment, this consists of the following Python 2.7 scripts for
 [Ghidra](https://github.com/nationalsecurityagency/ghidra):
 
+
+## Ghidra Data Scripts
+
+* `data_add_ref_with_offset.py`: Add a reference to each value in a selection
+  with a given bank and offset.
+
+
+## Ghidra NES Scripts
+
 * `nes_export.py`: Export annotated assembly files and a hyperlinked HTML
   disassembly for NES 6502 code.
 
@@ -36,9 +45,21 @@ from anything you make public :)
 
 # Documentation
 
+## `data_add_ref_with_offset.py`:
+
+**Menu Item:** Tools → Data - Add Reference with Offset
+
+This takes a selection consisting of one or more data values, each used as an
+offset into another address. It will prompt for that base address, adding each
+offset into it and turning that into a reference.
+
+This can help with annotating documentation and generating a useful
+disassembly.
+
+
 ## `nes_export.py`
 
-**Menu Item:** Tools -> NES - Export Disassembly
+**Menu Item:** Tools → NES - Export Disassembly
 
 This takes the disassembled banks for an NES ROM and turns it into:
 
@@ -54,7 +75,7 @@ This takes the disassembled banks for an NES ROM and turns it into:
 
 ## `nes_visualize_ppu_tile.py`
 
-**Menu Item:** Tools -> NES - Visualize PPU Tiles
+**Menu Item:** Tools → NES - Visualize PPU Tiles
 
 This takes a selection containing one or more arrays of one or more PPU tiles
 (each 16 bytes), turning them into ASCII visualizations. Those are inserted as
