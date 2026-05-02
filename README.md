@@ -12,6 +12,9 @@ At the moment, this consists of the following Python 2.7 scripts for
 * `data_add_ref_with_offset.py`: Add a reference to each value in a selection
   with a given bank and offset.
 
+* `data_update_types.py`: Update the types of data values without losing
+  comments or references.
+
 
 ## Ghidra NES Scripts
 
@@ -55,6 +58,18 @@ offset into it and turning that into a reference.
 
 This can help with annotating documentation and generating a useful
 disassembly.
+
+
+## `data_update_types.py`:
+
+**Menu Item:** Tools → Data - Update Types
+
+This helps with updating the types of data values without losing comments or
+references.
+
+Normally, when updating data types in Ghidra, any existing comments or
+references will be lost. This change carefully saves this state, updates the
+data types, and then restores them.
 
 
 ## `nes_export.py`
