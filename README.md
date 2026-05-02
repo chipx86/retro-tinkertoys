@@ -36,7 +36,7 @@ To install the Ghidra scripts:
 
 # Licensing
 
-This codebase is copyright (C) 2005, Christian Hammond, and licensed under the
+This codebase is Copyright © 2005, Christian Hammond, and licensed under the
 MIT license.
 
 If you use these tools, I'd love to hear from you, and I'd appreciate a link
