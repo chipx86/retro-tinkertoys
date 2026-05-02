@@ -13,7 +13,7 @@
 
 
 #@author Christian Hammond (ChipX86)
-#@menupath Tools.Visualize NES PPU Sprites
+#@menupath Tools.NES - Visualize PPU Tiles
 #@category Retro Tinkertoys
 
 
