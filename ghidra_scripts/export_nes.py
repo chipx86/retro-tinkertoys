@@ -23,7 +23,7 @@
 
 
 #@menupath Tools.Export NES
-#@category Exporters
+#@category Retro Tinkertoys
 
 
 from __future__ import unicode_literals

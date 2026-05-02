@@ -3,7 +3,7 @@
 #
 
 #@menupath Tools.Visualize Sprites
-#@category Analysis
+#@category Retro Tinkertoys
 
 from __future__ import unicode_literals
 
