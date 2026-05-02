@@ -9,8 +9,8 @@ At the moment, this consists of the following Python 2.7 scripts for
 * `export_nes.py`: Export annotated assembly files and a hyperlinked HTML
   disassembly for NES 6502 code.
 
-* `populate_ppu_tile_16.py`: Select a 16 byte NES PPU tile data and generate a
-* visualization in a comment.
+* `nes_visualize_ppu_tile.py`: Select a 16 byte NES PPU tile data and generate
+  a visualization in a comment.
 
 
 ## Installation
@@ -43,15 +43,12 @@ This takes the disassembled banks for an NES ROM and turns it into:
    [Mesen](https://www.mesen.ca/) emulator.
 
 
-## `populate_ppu_tile_16.py`
+## `nes_visualize_ppu_tile.py`
 
-**Menu Item:** Tools -> Visualize Sprites
+**Menu Item:** Tools -> NES - Visualize PPU Tiles
 
-This takes a 16-byte selection representing a 16-byte PPU tile and turns it
-into an ASCII visualization attached to a comment. This helps with documenting
-the tiles found within the ROM.
+This takes a selection containing one or more arrays of one or more PPU tiles
+(each 16 bytes), turning them into ASCII visualizations. Those are inserted as
+a comment above the tile data.
 
-
-## Activation
-
-Copy these scripts to your `$HOME/ghidra_scripts` (macOS/Linux) and activate the plugins. They'll then be available in the **Tools** menu.
+This helps with documenting the tiles found within the ROM.
