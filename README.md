@@ -13,7 +13,7 @@ At the moment, this consists of the following Python 2.7 scripts for
   a visualization in a comment.
 
 
-## Installation
+# Installation
 
 To install the Ghidra scripts:
 
@@ -24,8 +24,17 @@ To install the Ghidra scripts:
 4. In Script Manager, enable the scripts in **Script Manager** ->
    **Retro Tinkertoys**.
 
-See below for how to use each script:
 
+# Licensing
+
+This codebase is copyright (C) 2005, Christian Hammond, and licensed under the
+MIT license.
+
+If you use these tools, I'd love to hear from you, and I'd appreciate a link
+from anything you make public :)
+
+
+# Documentation
 
 ## `nes_export.py`
 

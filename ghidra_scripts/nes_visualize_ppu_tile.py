@@ -6,6 +6,10 @@
 #
 # Each array may represent 1 or more tiles. If it's more than one,
 # they'll be combined into a vertical row of tiles.
+#
+# Copyright (C) 2025 Christian Hammond.
+#
+# Licensed under the MIT license.
 
 
 #@author Christian Hammond (ChipX86)
