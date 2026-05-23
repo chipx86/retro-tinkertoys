@@ -3,7 +3,7 @@
 This is a set of scripts I've developed initially to aid in my
 [Faxanadu for NES disassembly work](https://github.com/chipx86/faxanadu).
 
-This codebase is Copyright © 2005, Christian Hammond, and licensed under the
+This codebase is Copyright © 2025, Christian Hammond, and licensed under the
 MIT license.
 
 If you use these tools, I'd love to hear from you, and I'd appreciate a link
