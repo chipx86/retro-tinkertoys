@@ -2471,21 +2471,12 @@ class BlockExporter:
             if processed_len <= 0:
                 processed_len = 1
 
-            if cur_addr == end_addr:
+            next_addr_offset = cur_addr.getUnsignedOffset() + processed_len
+
+            if next_addr_offset > end_addr.getUnsignedOffset():
                 break
 
-            try:
-                next_addr = cur_addr.addNoWrap(processed_len)
-
-                if next_addr.compareTo(cur_addr) <= 0:
-                    cur_addr = None
-                else:
-                    cur_addr = next_addr
-            except AddressOutOfBoundsException:
-                cur_addr = None
-            except Exception as e:
-                print(e)
-                cur_addr = None
+            cur_addr = cur_addr.addNoWrap(processed_len)
 
         # Flush any remaining bytes to the file.
         self.bytes_writer.flush()
@@ -3420,14 +3411,11 @@ class BlockExporter:
                     labeled=labeled,
                 )
 
-            if addr == end_addr:
+            if addr.getUnsignedOffset() + size > end_addr.getUnsignedOffset():
                 # We're done.
                 break
 
-            try:
-                addr = addr.addNoWrap(size)
-            except Exception:
-                break
+            addr = addr.addNoWrap(size)
 
     def _get_operand_info(
         self,
