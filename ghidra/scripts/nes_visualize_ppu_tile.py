@@ -1,3 +1,5 @@
+# encoding: utf-8
+#
 # Add a comment visualizing NES PPU tile data.
 #
 # This will take the selection representing one or more arrays of
