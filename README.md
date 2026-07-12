@@ -208,3 +208,38 @@ referenced by the pointer.
 
 Defines the upper byte of an address that immediately precedes the address
 referenced by the pointer.
+
+
+### Special EOL Comment Markers
+
+The exporter understands some special markers in the EOL (End-of-Line) comments,
+used to hint to the exporter about the nature of the data on that line so it
+can resolve addresses or partial addresses to labels.
+
+The following are supported:
+
+* `{@sym_u <addr>}`: Marks the value in an operand (such as in `LDA #$80`) as
+  the upper/high byte of the specified address. The exporter will emit a
+  `#>LABEL` reference instead of the raw value.
+
+* `{@sym_l <addr>}`: Marks the value in an operand as the low byte of the
+  specified address, emitting a `#<LABEL` reference.
+
+This is useful for the common 6502 pattern of splitting a 16-bit address into
+two 8-bit loads. The following:
+
+```asm
+LDA #$80   ; {@sym_u 8023}
+STA target+1
+LDA #$23   ; {@sym_l 8023}
+STA target
+```
+
+... will be exported as:
+
+```asm
+LDA #>MY_LABEL
+STA target+1
+LDA #<MY_LABEL
+STA target
+```

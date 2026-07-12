@@ -63,7 +63,6 @@ except ImportError:
 from ghidra.program.model.address import (
     Address,
     AddressOutOfBoundsException,
-    GenericAddress,
 )
 from ghidra.program.model.data import (
     Array,
@@ -123,8 +122,15 @@ ABSOLUTE_MATCH = re.compile(
 
 #: A regex matching placeholders for unresolved symbols in comments.
 SYMBOL_PLACEHOLDER_RE = re.compile(
-    r'{@sym(?:bol) (?P<addr>.+?)}'
+    r'{@sym(?:bol)?(?:_(?P<nibble>[ul]))? (?P<addr>.+?)}'
 )
+
+
+#: Mapping of {@sym_u}/{@sym_l} comment marker nibbles to output prefixes.
+SYMBOL_NIBBLE_PREFIXES = {
+    'l': '<',
+    'u': '>',
+}
 
 
 #: A regex matching resolvable symbols, comprised of a block and an address.
@@ -2907,12 +2913,17 @@ class BlockExporter:
         if not comment:
             return comment
 
-        return SYMBOL_PLACEHOLDER_RE.sub(
-            lambda m: (
-                self.get_ref_to_addr(m.group('addr')) or
-                m.group('addr')
-            ),
-            comment.rstrip())
+        def _norm_ref(m):
+            if m.group('nibble'):
+                return ''
+            else:
+                return (self.get_ref_to_addr(m.group('addr')) or
+                        m.group('addr'))
+
+        return (
+            SYMBOL_PLACEHOLDER_RE.sub(_norm_ref, comment.rstrip())
+            .strip()
+        )
 
     def get_defined_ref_and_offset(
         self,
@@ -2969,8 +2980,10 @@ class BlockExporter:
         if refs:
             assert len(refs) == 1
 
-            symbol = exporter.symbol_table.getPrimarySymbol(
-                refs[0].getToAddress(),
+            ref = refs[0]
+            symbol = (
+                exporter.get_ref_associated_symbol(ref) or
+                exporter.symbol_table.getPrimarySymbol(ref.getToAddress())
             )
 
             if symbol:
@@ -3459,12 +3472,31 @@ class BlockExporter:
                     The offset from the primary symbol, if found. ``None``
                     otherwise.
         """
-        # Build a map of normalized target addresses to reference objects,
-        # based on the operands in this code unit.
+        exporter = self.exporter
+        listing = exporter.listing
+
+        # Build a map of normalized target address offsets to reference
+        # objects, based on the operands in this code unit.
         op_refs = {
-            _ref.getToAddress().toString(False).lower(): _ref
+            _ref.getToAddress().getUnsignedOffset(): _ref
             for _ref in code_unit.getOperandReferences(operand_index)
         }
+
+        # If there's an EOL comment marking this as an upper or lower byte
+        # symbol, parse out hte information and figure out the address and
+        # which nibble is being references.
+        marker_nibble = None    # type: str | None
+        marker_addr_str = None  # type: str | None
+
+        comment = listing.getComment(CodeUnit.EOL_COMMENT,
+                                     code_unit.getAddress())
+
+        if comment:
+            m = SYMBOL_PLACEHOLDER_RE.search(comment)
+
+            if m and m.group('nibble'):
+                marker_nibble = m.group('nibble')
+                marker_addr_str = m.group('addr')
 
         op_str = None  # type: str | None
         default_op_rep = \
@@ -3481,16 +3513,11 @@ class BlockExporter:
             op_addr_ref = None  # type: str | None
             op_addr = None      # type: Address | None
 
-            if isinstance(op_obj, GenericAddress):
-                # This is a generic address, which is not tied to
-                # a given bank. We'll use the lookup table of
-                # defined references if we can.
+            if isinstance(op_obj, Address):
+                # This is an address (generic or bank-relative). Look for
+                # any explicit reference matching its numeric value.
                 op_addr = op_obj
-                op_addr_ref = op_refs.get(str(op_obj).lower())
-            elif isinstance(op_obj, Address):
-                # This is an explicit address, which should resolve
-                # to a stable location.
-                op_addr = op_obj
+                op_addr_ref = op_refs.get(op_addr.getUnsignedOffset())
             elif isinstance(op_obj, Scalar):
                 # This may be a value to include as an operand, or
                 # it may be an address. Find out which it may be.
@@ -3498,8 +3525,19 @@ class BlockExporter:
                     # This is a static value. Format it appropriately.
                     scalar_value = op_obj.getValue()
 
-                    if (abs(scalar_value) <= 0xFF and
-                        not mnemonic.startswith('j')):
+                    if marker_nibble:
+                        # This is the upper or lower byte of an address.
+                        # Emit a reference to the label's upper or lower byte.
+                        assert marker_addr_str is not None
+
+                        op_str = self._format_symbolic_immediate_byte(
+                            code_unit=code_unit,
+                            nibble=marker_nibble,
+                            addr_str=marker_addr_str,
+                            scalar_value=scalar_value,
+                        )
+                    elif (abs(scalar_value) <= 0xFF and
+                          not mnemonic.startswith('j')):
                         op_str = asm_mode.format_op_byte(scalar_value)
                     else:
                         op_str = asm_mode.format_op_word(scalar_value)
@@ -3508,7 +3546,7 @@ class BlockExporter:
                 else:
                     # Treat this as a reference to convert to a
                     # symbol.
-                    op_addr_ref = op_refs.get('%04x' % op_obj.getValue())
+                    op_addr_ref = op_refs.get(op_obj.getValue() & 0xFFFF)
             else:
                 # This isn't an operand value we need to transform.
                 continue
@@ -3523,7 +3561,7 @@ class BlockExporter:
 
             # If we have an address, try to convert it to a symbol.
             if op_addr is not None:
-                symbol = exporter.find_symbol_for_address(op_addr)
+                symbol = exporter.find_symbol_for_ref(op_addr_ref, op_addr)
 
                 if symbol:
                     primary_symbol = symbol
@@ -3531,6 +3569,107 @@ class BlockExporter:
                     break
 
         return op_str, primary_symbol, primary_offset
+
+    def _format_symbolic_immediate_byte(
+        self,
+        code_unit,     # type: CodeUnit
+        nibble,        # type: str
+        addr_str,      # type: str
+        scalar_value,  # type: int
+    ):  # type: (...) -> str
+        """Return a symbolic high/low byte reference for an immediate operand.
+
+        This builds a ``#>`` or ``#<`` operand string referencing the
+        symbol (or raw address) resolved from ``addr_str``, based on an
+        EOL comment marker (``{@sym_u ...}`` or ``{@sym_l ...}``).
+
+        This will also validate that the actual immediate byte value matches
+        the expected upper or lower byte of the resolved address, if it can be
+        determined. Any mismatches will log to the console.
+
+        Args:
+            code_unit (ghidra.program.model.listing.CodeUnit):
+                The code unit for the instruction, used for the warning
+                message.
+
+            nibble (str):
+                The marker's nibble indicator (``u`` or ``l``).
+
+            addr_str (str):
+                The address or symbol name from the marker, in ``<addr>``
+                or ``<block>::<addr>`` hex form (or using a symbol name).
+
+            scalar_value (int):
+                The actual immediate operand value from the instruction.
+
+        Returns:
+            str:
+            The operand string to use, such as ``#>{{@SYMBOL:PRG0::MY_LABEL}}``
+            or ``#<$8123``.
+        """
+        prefix = SYMBOL_NIBBLE_PREFIXES[nibble]
+        ref = self.get_ref_to_addr(addr_str)
+
+        target_value = self._resolve_marker_target_value(addr_str)
+
+        if target_value is not None:
+            if nibble == 'u':
+                expected_value = (target_value >> 8) & 0xFF
+            else:
+                expected_value = target_value & 0xFF
+
+            actual_value = scalar_value & 0xFF
+
+            if actual_value != expected_value:
+                println(
+                    '[%s] Warning: Immediate value $%02x does not match '
+                    'the expected %s byte ($%02x) of "%s".'
+                    % (code_unit.getAddress(),
+                       actual_value,
+                       'upper' if nibble == 'u' else 'lower',
+                       expected_value,
+                       addr_str)
+                )
+
+        return '#%s%s' % (prefix, ref)
+
+    def _resolve_marker_target_value(
+        self,
+        addr_str,  # type: str
+    ):  # type: (...) -> int | None
+        """Return the numeric target address for a comment marker's address.
+
+        ``addr_str`` may be a plain hex address, a ``<block>::<addr>`` hex
+        address, or a symbol name.
+
+        If a Block is part of the address, it will be ignored, since NES CPU
+        addresses are the same numeric value regardless of block.
+
+        Args:
+            addr_str (str):
+                The address or symbol name from the marker.
+
+        Returns:
+            int:
+            The resolved 16-bit numeric address, or ``None`` if it could not
+            be resolved.
+        """
+        hex_part = addr_str
+        m = SYMBOL_RE.match(addr_str)
+
+        if m:
+            hex_part = m.group('addr')
+
+        if ADDR_RE.match(hex_part):
+            return int(hex_part, 16)
+
+        # This wasn't a hex address. Try resolving it as a symbol name.
+        symbols = self.exporter.name_to_symbol.get(addr_str)
+
+        if symbols:
+            return symbols[0].getAddress().getUnsignedOffset() & 0xFFFF
+
+        return None
 
     def _get_jump_table_dest_target(
         self,
@@ -3582,7 +3721,7 @@ class BlockExporter:
             ref = refs[0]
             dest_addr, dest_offset = \
                 self.get_defined_ref_and_offset(ref)
-            dest_symbol = exporter.find_symbol_for_address(dest_addr)
+            dest_symbol = exporter.find_symbol_for_ref(ref, dest_addr)
 
             if dest_symbol:
                 dest_block_name, dest_symbol_name = dest_symbol
@@ -4309,6 +4448,79 @@ class Exporter:
         assert isinstance(addr, Address)
 
         return addr.getAddressSpace().getName()
+
+    def get_ref_associated_symbol(
+        self,
+        ref,  # type: Reference | None
+    ):  # type: (...) -> Symbol | None
+        """Return the symbol associated with a reference.
+
+        Ghidra allows a specific memory reference to be tied to one label
+        out of possibly several defined at the same address (by using
+        "Set Associated Label..." in the context menu). If set, this will
+        return that label.
+
+        Args:
+            ref (ghidra.program.model.symbol.Reference):
+                The reference to check.
+
+        Returns:
+            ghidra.program.model.symbol.Symbol:
+            The associated symbol, or ``None`` if the reference doesn't have
+            one set.
+        """
+        if ref is None or not ref.isMemoryReference():
+            return None
+
+        symbol_id = ref.getSymbolID()
+
+        if symbol_id == -1:
+            return None
+
+        return self.symbol_table.getSymbol(symbol_id)
+
+    def find_symbol_for_ref(
+        self,
+        ref,   # type: Reference | None
+        addr,  # type: Address | str | None
+    ):  # type: (...) -> tuple[str, str] | None
+        """Return symbol information for a reference.
+
+        This prefers any label explicitly associated with the reference
+        (see :py:meth:`get_ref_associated_symbol`) over the default for the
+        address so that multiple labels defined at the same address can be
+        disambiguated per-reference.
+
+        Args:
+            ref (ghidra.program.model.symbol.Reference):
+                The reference to resolve a symbol for.
+
+            addr (ghidra.program.model.address.Address or str):
+                The fallback address to resolve a symbol for if the
+                reference has no associated symbol.
+
+        Returns:
+            tuple:
+            If a symbol is found, this will be a 2-tuple of:
+
+            Tuple:
+                0 (str):
+                    The block name where the symbol resides.
+
+                1 (str):
+                    The sanitized label for the symbol.
+
+            If one is not found, this will be ``None``.
+        """
+        associated_symbol = self.get_ref_associated_symbol(ref)
+
+        if associated_symbol is not None:
+            return (
+                self.get_block_name_for_addr(associated_symbol.getAddress()),
+                self.sanitize_label_name(associated_symbol.getName()),
+            )
+
+        return self.find_symbol_for_address(addr)
 
     def find_symbol_for_address(
         self,
