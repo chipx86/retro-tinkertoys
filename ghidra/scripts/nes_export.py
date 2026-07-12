@@ -270,22 +270,6 @@ ABSOLUTE_ADDR_OPCODES = {
 # Common utility functions
 ###########################################################################
 
-def get_addr_for_eol_comment(
-    addr,  # type: Address
-):  # type: (...) -> str
-    """Return the representation of an address for an EOL comment.
-
-    Args:
-        addr (ghidra.program.model.address.Address):
-            The address to represent.
-
-    Returns:
-        str:
-        The address representation for the comment.
-    """
-    return '[$%s]' % addr.toString(False)
-
-
 def get_data_type_str(
     data_type,  # type: DataType
 ):  # type: (...) -> str
@@ -927,11 +911,8 @@ class BytesWriter:
             ]
 
         # Check if a new comment should be generated for the end of the line.
-        if not eol_comment and start_addr:
-            eol_comment = '%s %s' % (
-                get_addr_for_eol_comment(start_addr),
-                data_type_str,
-            )
+        if not eol_comment:
+            eol_comment = data_type_str
 
         # Write it to the file.
         self.writer.write_code(data_text,
@@ -1083,6 +1064,9 @@ class BaseFileWriter(object):
 
     #: The subdirectory where the file should be placed.
     dirname = None  # type: str | None
+
+    #: Whether lines should include addresses in end-of-line comments.
+    use_eol_address_comments = False  # type: bool
 
     #: The column position for comments in assembly text output.
     COMMENT_COLUMN = 45
@@ -1786,6 +1770,7 @@ class HTMLFileWriter(BaseFileWriter):
 
     ext = 'html'
     dirname = 'html'
+    use_eol_address_comments = True
 
     CSS = textwrap.dedent("""
          @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:ital,wght@0,100..700;1,100..700&display=swap');
@@ -2683,8 +2668,6 @@ class BlockExporter:
 
         # Write any labels.
         if pending_labels:
-            eol_comment = get_addr_for_eol_comment(addr)
-
             for label in pending_labels:
                 label_name = exporter.sanitize_label_name(label)
 
@@ -2693,10 +2676,7 @@ class BlockExporter:
                         label_name,
                         addr=addr,
                         is_local=label_name.startswith('@'),
-                        eol_comment=eol_comment,
                     )
-
-                    eol_comment = ''
 
         if func is not None:
             # Write this comment at this location, after the function label.
@@ -3360,7 +3340,7 @@ class BlockExporter:
                 ref_str = self.get_ref_str_from_addr(addr)
 
                 if ref_str:
-                    eol_comment = '%s [$%s]' % (ref_str, addr)
+                    eol_comment = ref_str
 
             output_bytes = True
 
