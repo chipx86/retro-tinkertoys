@@ -30,6 +30,9 @@ from ghidra.util.exception import CancelledException
 if 0:
     _StoredComments = dict[int, str | None]
 
+    _StoredArrayComments = dict[int, _StoredComments]
+    _StoredArrayCommentsList = list[_StoredArrayComments]
+
     _StoredRefs = list[tuple[
         Address,
         Address,
@@ -203,20 +206,30 @@ class UpdateDataTypes(GhidraScript):
                 cur_addr = cur_addr.add(data_len)
 
         # Grab all the comments and references for each of the places
-        # we've tracked.
+        # we've tracked. These are index-aligned with `placements`, since
+        # references and array-component comments are captured across an
+        # entire placement's range, not just at its starting address.
         ref_mgr = program.getReferenceManager()
-        comment_map = {}  # type: dict[Address, _StoredComments | None]
-        refs_map = {}  # type: dict[Address, _StoredRefs]
+        placement_own_comments = []  # type: list[_StoredComments | None]
+        placement_component_comments = []  # type: _StoredArrayCommentsList
+        placement_refs = []  # type: list[dict[Address, _StoredRefs]]
 
         for placement_addr, placement_len, placement_kind in placements:
-            comment_map[placement_addr] = self._get_comments(
+            placement_end = placement_addr.add(placement_len - 1)
+
+            own_comments, component_comments = self._get_placement_comments(
                 listing=listing,
                 addr=placement_addr,
+                kind=placement_kind,
             )
-            refs_map[placement_addr] = self._get_outgoing_refs(
+            placement_own_comments.append(own_comments)
+            placement_component_comments.append(component_comments)
+
+            placement_refs.append(self._get_range_refs_map(
                 ref_mgr=ref_mgr,
-                addr=placement_addr,
-            )
+                start_addr=placement_addr,
+                end_addr=placement_end,
+            ))
 
         # Prepare to track progress for the updating, since this can take a
         # little while.
@@ -235,6 +248,18 @@ class UpdateDataTypes(GhidraScript):
             # Clear out this entire range.
             clearListing(placement_addr, placement_end)
 
+            # Track the end of what we actually create, which may be less
+            # than the full placement if the new data type doesn't evenly
+            # fit (or is wider than the whole placement).
+            new_end = placement_end
+
+            # If the array placement ends up rebuilt as flat, individually
+            # created items instead of a true array (the "uneven split"
+            # fallback), this tracks how many were created, so comments can
+            # be restored onto each item directly instead of onto array
+            # components that no longer exist.
+            flat_item_count = None  # type: int | None
+
             if placement_kind == 'array':
                 # This is an array. Rebuild it with the same length. This
                 # may involve combining or splitting items.
@@ -249,9 +274,19 @@ class UpdateDataTypes(GhidraScript):
                 else:
                     # The items won't fit in the placement. Only process what
                     # we can, and keep it flat data.
-                    for i in range(new_item_count):
-                        item_addr = placement_addr.add(i * data_len)
+                    for item_index in range(new_item_count):
+                        item_addr = placement_addr.add(item_index * data_len)
                         createData(item_addr, data_type)
+
+                    flat_item_count = new_item_count
+
+                    if new_item_count > 0:
+                        new_end = placement_addr.add(
+                            new_item_count * data_len - 1)
+                    else:
+                        # The new type is wider than the whole placement.
+                        # Nothing was created.
+                        new_end = placement_addr
             elif placement_kind == 'item':
                 # This is an individual item.
                 createData(placement_addr, data_type)
@@ -260,23 +295,37 @@ class UpdateDataTypes(GhidraScript):
                          % placement_kind)
                 continue
 
-            # Remove any auto-created outgoing references.
-            for ref in ref_mgr.getReferencesFrom(placement_addr):
-                try:
-                    ref_mgr.delete(ref)
-                except Exception:
-                    # If we can't delete this, ignore it.
-                    pass
+            # Remove any auto-created outgoing references across the whole
+            # range we just created.
+            source_addrs = self._get_ref_source_addrs(
+                ref_mgr=ref_mgr,
+                start_addr=placement_addr,
+                end_addr=new_end,
+            )
+
+            for ref_addr in source_addrs:
+                for ref in ref_mgr.getReferencesFrom(ref_addr):
+                    try:
+                        ref_mgr.delete(ref)
+                    except Exception:
+                        # If we can't delete this, ignore it.
+                        pass
 
             # And restore the references and comments.
-            self._restore_outgoing_refs(
-                ref_mgr=ref_mgr,
-                refs=refs_map.get(placement_addr, []),
-            )
-            self._restore_comments(
+            for ref_addr, addr_refs in placement_refs[i].items():
+                self._restore_outgoing_refs(
+                    ref_mgr=ref_mgr,
+                    refs=addr_refs,
+                )
+
+            self._restore_placement_comments(
                 listing=listing,
                 addr=placement_addr,
-                comments=comment_map.get(placement_addr),
+                kind=placement_kind,
+                own_comments=placement_own_comments[i],
+                component_comments=placement_component_comments[i],
+                item_len=data_len,
+                flat_item_count=flat_item_count,
             )
 
     def _get_range_has_instructions(
@@ -351,6 +400,35 @@ class UpdateDataTypes(GhidraScript):
         # No array was found starting at that address.
         return None
 
+    def _get_comments_for_code_unit(
+        self,
+        code_unit,  # type: CodeUnit | None
+    ):  # type: (...) -> _StoredComments | None
+        """Return all comment types for a code unit.
+
+        Args:
+            code_unit (ghidra.program.model.listing.CodeUnit):
+                The code unit to fetch comments for.
+
+        Returns:
+            dict:
+            A mapping of comment types to values. If a code unit was
+            not provided, this will be ``None``.
+        """
+        if code_unit is None:
+            return None
+
+        return {
+            code_unit_type: code_unit.getComment(code_unit_type)
+            for code_unit_type in (
+                CodeUnit.EOL_COMMENT,
+                CodeUnit.PRE_COMMENT,
+                CodeUnit.POST_COMMENT,
+                CodeUnit.PLATE_COMMENT,
+                CodeUnit.REPEATABLE_COMMENT,
+            )
+        }
+
     def _get_comments(
         self,
         listing,  # type: Listing
@@ -373,22 +451,65 @@ class UpdateDataTypes(GhidraScript):
             A mapping of comment types to values, if this is a code unit.
             Otherwise, this will be ``None``.
         """
-        code_unit = listing.getCodeUnitAt(addr)
+        return self._get_comments_for_code_unit(listing.getCodeUnitAt(addr))
 
-        if code_unit is None:
-            # No code unit was found.
-            return None
+    def _get_placement_comments(
+        self,
+        listing,  # type: Listing
+        addr,     # type: Address
+        kind,     # type: str
+    ):  # type: (...) -> tuple[_StoredComments | None, _StoredArrayComments]
+        """Return all comments for a placement.
 
-        return {
-            code_unit_type: code_unit.getComment(code_unit_type)
-            for code_unit_type in (
-                CodeUnit.EOL_COMMENT,
-                CodeUnit.PRE_COMMENT,
-                CodeUnit.POST_COMMENT,
-                CodeUnit.PLATE_COMMENT,
-                CodeUnit.REPEATABLE_COMMENT,
-            )
-        }
+        This captures the placement's own top-level comments (e.g. the
+        comments on an array as a whole, or on a single item).
+
+        For arrays, this also captures each component's own comments, keyed by
+        the component's index.
+
+        Args:
+            listing (ghidra.program.model.listing.Listing):
+                The listing owning the address.
+
+            addr (ghidra.program.model.address.Address):
+                The placement's starting address.
+
+            kind (str):
+                The kind of placement (``array`` or ``item``).
+
+        Returns:
+            tuple:
+            A 2-tuple of:
+
+            Tuple:
+                0 (dict):
+                    The placement's own top-level comments, or ``None``.
+
+                1 (dict):
+                    A mapping of array component index to that component's
+                    comments. This will be empty for non-array placements.
+        """
+        own_comments = self._get_comments(listing=listing, addr=addr)
+        component_comments = {}  # type: dict[int, _StoredComments]
+
+        if kind == 'array':
+            # This is an array. Go through its componetns and build up a
+            # list, storing at each component's index.
+            data = listing.getDataAt(addr)
+
+            if data is not None:
+                for index in range(data.getNumComponents()):
+                    component = data.getComponent(index)
+
+                    if component is None:
+                        continue
+
+                    comments = self._get_comments_for_code_unit(component)
+
+                    if comments:
+                        component_comments[index] = comments
+
+        return own_comments, component_comments
 
     def _get_outgoing_refs(
         self,
@@ -440,6 +561,97 @@ class UpdateDataTypes(GhidraScript):
             if ref.getToAddress() is not None
         ]
 
+    def _get_ref_source_addrs(
+        self,
+        ref_mgr,     # type: ReferenceManager
+        start_addr,  # type: Address
+        end_addr,    # type: Address
+    ):  # type: (...) -> list[Address]
+        """Return every address with an outgoing reference within a range.
+
+        This walks each address in the range, checking if there are any
+        outgoing references from that address. If there is one, it will be
+        returned in the result.
+
+        Args:
+            ref_mgr (ghidra.program.model.symbol.ReferenceManager):
+                The reference manager used for the program.
+
+            start_addr (ghidra.program.model.address.Address):
+                The start of the range (inclusive).
+
+            end_addr (ghidra.program.model.address.Address):
+                The end of the range (inclusive).
+
+        Returns:
+            list:
+            The list of addresses within the range that have at least one
+            outgoing reference.
+        """
+        addrs = []  # type: list[Address]
+        addr = start_addr
+
+        while addr.compareTo(end_addr) <= 0:
+            if len(ref_mgr.getReferencesFrom(addr)) > 0:
+                addrs.append(addr)
+
+            addr = addr.add(1)
+
+        return addrs
+
+    def _get_range_refs_map(
+        self,
+        ref_mgr,     # type: ReferenceManager
+        start_addr,  # type: Address
+        end_addr,    # type: Address
+    ):  # type: (...) -> dict[Address, _StoredRefs]
+        """Return a map of addresses to their outgoing references.
+
+        Args:
+            ref_mgr (ghidra.program.model.symbol.ReferenceManager):
+                The reference manager used for the program.
+
+            start_addr (ghidra.program.model.address.Address):
+                The start of the range (inclusive).
+
+            end_addr (ghidra.program.model.address.Address):
+                The end of the range (inclusive).
+
+        Returns:
+            dict:
+            A mapping of each address in the range to their outgoing
+            references.
+        """
+        return {
+            addr: self._get_outgoing_refs(ref_mgr=ref_mgr,
+                                          addr=addr)
+            for addr in self._get_ref_source_addrs(
+                ref_mgr=ref_mgr,
+                start_addr=start_addr,
+                end_addr=end_addr,
+            )
+        }
+
+    def _restore_comments_for_code_unit(
+        self,
+        code_unit,  # type: CodeUnit | None
+        comments,   # type: _StoredComments | None
+    ):  # type: (...) -> None
+        """Restore comments onto a code unit.
+
+        Args:
+            code_unit (ghidra.program.model.listing.CodeUnit):
+                The code unit to restore comments onto, such as a code unit
+                itself or an individual array component.
+
+            comments (dict):
+                The comments to restore.
+        """
+        if comments and code_unit:
+            for code_unit_type, text in comments.items():
+                if text:
+                    code_unit.setComment(code_unit_type, text)
+
     def _restore_comments(
         self,
         listing,   # type: Listing
@@ -460,16 +672,88 @@ class UpdateDataTypes(GhidraScript):
             comments (dict):
                 The comments to restore.
         """
-        if not comments:
-            # There's nothing to restore.
+        self._restore_comments_for_code_unit(listing.getCodeUnitAt(addr),
+                                             comments)
+
+    def _restore_placement_comments(
+        self,
+        listing,               # type: Listing
+        addr,                  # type: Address
+        kind,                  # type: str
+        own_comments,          # type: _StoredComments | None
+        component_comments,    # type: dict[int, _StoredComments]
+        item_len=None,         # type: int | None
+        flat_item_count=None,  # type: int | None
+    ):  # type: (...) -> None
+        """Restore all comments for a placement.
+
+        This restores the placement's own top-level comments, and, for
+        arrays, all their components' comments.
+
+        Args:
+            listing (ghidra.program.model.listing.Listing):
+                The listing owning the address.
+
+            addr (ghidra.program.model.address.Address):
+                The placement's starting address.
+
+            kind (str):
+                The kind of placement (``array`` or ``item``).
+
+            own_comments (dict):
+                The placement's own top-level comments to restore.
+
+            component_comments (dict):
+                A mapping of array component index to that component's
+                comments to restore.
+
+            item_len (int, optional):
+                The length of each item, used to locate flat items by
+                index. Required if ``flat_item_count`` is provided.
+
+            flat_item_count (int, optional):
+                The number of flat items created in place of a true array,
+                if the array was rebuilt that way. ``None`` if a true array
+                was created.
+        """
+        self._restore_comments(listing=listing, addr=addr,
+                               comments=own_comments)
+
+        if kind != 'array' or not component_comments:
             return
 
-        code_unit = listing.getCodeUnitAt(addr)
+        if flat_item_count is not None:
+            assert item_len is not None
 
-        if code_unit is not None:
-            for code_unit_type, text in comments.items():
-                if text:
-                    code_unit.setComment(code_unit_type, text)
+            # Flat items were created instead of a true array. Restore each
+            # captured component directly onto its own item's address.
+            for index, comments in component_comments.items():
+                if index >= flat_item_count:
+                    # There's nowhere to put this comment.
+                    continue
+
+                item_addr = addr.add(index * item_len)
+                self._restore_comments(listing=listing,
+                                       addr=item_addr,
+                                       comments=comments)
+
+            return
+
+        data = listing.getDataAt(addr)
+
+        if data is not None:
+            num_components = data.getNumComponents()
+
+            for index, comments in component_comments.items():
+                if index >= num_components:
+                    # The new array is shorter than the old one, so
+                    # there's nowhere to put this comment.
+                    continue
+
+                component = data.getComponent(index)
+
+                if component is not None:
+                    self._restore_comments_for_code_unit(component, comments)
 
     def _restore_outgoing_refs(
         self,
@@ -499,11 +783,11 @@ class UpdateDataTypes(GhidraScript):
              is_primary) in refs:
             try:
                 ref = ref_mgr.addMemoryReference(
-                    fromAddr=from_addr,
-                    toAddr=to_addr,
-                    type=ref_type,
-                    source=src_type,
-                    opIndex=op_index,
+                    from_addr,
+                    to_addr,
+                    ref_type,
+                    src_type,
+                    op_index,
                 )
 
                 if ref is not None and is_primary:
