@@ -72,6 +72,7 @@ from ghidra.program.model.data import (
     DataType,
     Enum,
     Pointer,
+    StringDataType,
     Structure,
     TypeDef,
     Union,
@@ -589,6 +590,7 @@ class CA65Target(BaseAssemblyTarget):
     EQU_OP = '='
     UNDEF_BYTES_OP = '.byte'
     MAX_BYTES_PER_LINE = 8
+    MAX_STRING_BYTES_PER_LINE = 20
     BYTES_SEP = ','
 
     COMPACT_BYTES_OP = '.byte'
@@ -734,11 +736,12 @@ class BytesWriter:
         """
         self.writer = writer
 
-        self.buffer = []           # type: list[int | None]
-        self.start_addr = None     # type: Address | None
-        self.cur_data_type = None  # type: DataType | None
-        self.labeled = False       # type: bool
-        self.cur_size = 0          # type: int
+        self.buffer = []             # type: list[int | None]
+        self.start_addr = None       # type: Address | None
+        self.cur_data_type = None    # type: DataType | None
+        self.labeled = False         # type: bool
+        self.cur_size = 0            # type: int
+        self.cur_eol_comment = None  # type: str | None
 
     def append(
         self,
@@ -785,16 +788,13 @@ class BytesWriter:
             'value was %r, not None or int' % value
         )
 
-        if self.start_addr is None:
-            # This is the first call to append(). Set the start address for
-            # the sequence to the provided default address.
-            self.start_addr = default_start_addr
-
         # Check if there's state that requires this to be outputted separately
         # from other bytes. This would start a new sequence.
-        if (eol_comment or
-            data_type != self.cur_data_type or
-            size != self.cur_size or
+        is_string = isinstance(data_type, StringDataType)
+
+        if ((self.cur_eol_comment and eol_comment) or
+            (self.cur_data_type and data_type != self.cur_data_type) or
+            (self.cur_size and size != self.cur_size) or
             (labeled and not self.labeled)):
             # Distinguish this from previous bytes.
             flushed = self.flush()
@@ -802,10 +802,18 @@ class BytesWriter:
             if flushed and (not labeled or data_type != self.cur_data_type):
                 self.writer.write_blank_line()
 
+        if self.start_addr is None:
+            # This is the first call to append(). Set the start address for
+            # the sequence to the provided default address.
+            self.start_addr = default_start_addr
+
         buffer = self.buffer
         self.cur_data_type = data_type
         self.cur_size = size
         self.labeled = labeled
+
+        if eol_comment:
+            self.cur_eol_comment = eol_comment
 
         # Output the value, capping to the provided size if needed.
         if value is None:
@@ -821,24 +829,21 @@ class BytesWriter:
             )
 
         # Check if we need to flush this to the file, ending the line.
-        if (eol_comment or
-            (len(buffer) * size) >= asm_mode.MAX_BYTES_PER_LINE or
+        bytes_len = len(buffer) * size
+
+        if ((is_string and bytes_len >= asm_mode.MAX_STRING_BYTES_PER_LINE) or
+            (not is_string and
+             (eol_comment or
+              bytes_len >= asm_mode.MAX_BYTES_PER_LINE)) or
             isinstance(data_type, Enum)):
             # We do. Flush it.
-            self.flush(eol_comment=eol_comment)
+            self.flush()
 
-    def flush(
-        self,
-        eol_comment=None  # type: str | None
-    ):  # type: (...) -> bool
+    def flush(self):  # type: (...) -> bool
         """Flush the buffer to the file.
 
         This will output the sequence of bytes to a line and then begin a
         new line.
-
-        Args:
-            eol_comment (str, optional):
-                The optional comment to add to the end of the line.
 
         Returns:
             bool:
@@ -860,7 +865,7 @@ class BytesWriter:
 
         # Different data types will need to be written specially, based on
         # the target assembler.
-        if data_type_str == 'char':
+        if data_type_str in ('char', 'string'):
             # This is a char. Output as strings.
             groups = self._group_string(buffer)
             data_text = [
