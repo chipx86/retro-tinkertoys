@@ -863,6 +863,8 @@ class BytesWriter:
         data_type_str = data_type.getName()
         assert data_type_str
 
+        raw_bytes = []  # type: list[int]
+
         # Different data types will need to be written specially, based on
         # the target assembler.
         if data_type_str in ('char', 'string'):
@@ -875,6 +877,9 @@ class BytesWriter:
                     for group in groups
                 ),
             ]
+
+            for group in groups:
+                raw_bytes += group[1]
         elif isinstance(data_type, Enum):
             # This is an enum value. Output as a defined enum value.
             assert self.cur_size == 1
@@ -886,6 +891,11 @@ class BytesWriter:
                     for b in buffer
                 ),
             ]
+
+            raw_bytes = [
+                b or 0
+                for b in buffer
+            ]
         elif self.cur_size == 2:
             # This is a word (pointer, short, ushort). Output as words.
             data_text = [
@@ -895,6 +905,15 @@ class BytesWriter:
                     for word in buffer
                 ),
             ]
+
+            for word in buffer:
+                if word is None:
+                    raw_bytes += [0, 0]
+                else:
+                    raw_bytes += [
+                        word & 0xFF,
+                        (word >> 8) & 0xFF,
+                    ]
         elif len(buffer) < 8 or not data_type_str.startswith('undefined'):
             # These are bytes (or similar), but there's not too many. Output
             # as byte definitions.
@@ -904,6 +923,11 @@ class BytesWriter:
                     asm_mode.format_data_byte(b or 0)
                     for b in buffer
                 )
+            ]
+
+            raw_bytes = [
+                b or 0
+                for b in buffer
             ]
         else:
             # Output anything else as a range of raw bytes.
@@ -915,18 +939,23 @@ class BytesWriter:
                 )
             ]
 
-        # Check if a new comment should be generated for the end of the line.
-        if not eol_comment:
-            eol_comment = data_type_str
+            raw_bytes = [
+                b or 0
+                for b in buffer
+            ]
 
         # Write it to the file.
-        self.writer.write_code(data_text,
-                               addr=start_addr,
-                               eol_comment=eol_comment)
+        self.writer.write_code(
+            data_text,
+            addr=start_addr,
+            eol_comment=self.cur_eol_comment or data_type_str,
+            rom_bytes=raw_bytes,
+        )
 
         # Reset the buffer for the next sequence of bytes.
         self.buffer = []
         self.start_addr = None
+        self.cur_eol_comment = None
 
         return True
 
@@ -1143,8 +1172,9 @@ class BaseFileWriter(object):
 
     def write_line(
         self,
-        line,       # type: str
-        addr=None,  # type: Address | None
+        line,            # type: str
+        addr=None,       # type: Address | None
+        rom_bytes=None,  # type: list[int] | None
     ):  # type: (...) -> None
         """Write a line to the file.
 
@@ -1156,13 +1186,17 @@ class BaseFileWriter(object):
 
             addr (ghidra.program.model.address.Address, optional):
                 The address of the line.
+
+            rom_bytes (list of int, optional):
+                The bytes in the ROM representing the line.
         """
         fp = self.fp
         assert fp is not None
 
         self.blank_line_count = 0
         fp.write(self.format_line(self.process_line(line),
-                                  addr=addr))
+                                  addr=addr,
+                                  rom_bytes=rom_bytes))
 
     def write_lines(
         self,
@@ -1193,9 +1227,10 @@ class BaseFileWriter(object):
 
     def write_line_with_eol_comment(
         self,
-        line,         # type: str
-        addr,         # type: Address
-        eol_comment,  # type: str | None
+        line,            # type: str
+        addr,            # type: Address
+        eol_comment,     # type: str | None
+        rom_bytes=None,  # type: list[int] | None
     ):  # type: (...) -> None
         """Write a line with an end-of-line comment.
 
@@ -1210,6 +1245,9 @@ class BaseFileWriter(object):
 
             eol_comment (str):
                 The commemnt to add to the end of the line.
+
+            rom_bytes (list of int, optional):
+                The bytes in the ROM representing the line.
         """
         raise NotImplementedError
 
@@ -1290,10 +1328,10 @@ class BaseFileWriter(object):
 
     def write_code(
         self,
-        code,                    # type: list[str]
-        addr,                    # type: Address
-        instruction_bytes=None,  # type: list[str] | None
-        eol_comment=None,        # type: str | None
+        code,              # type: list[str]
+        addr,              # type: Address
+        rom_bytes=None,    # type: list[int] | None
+        eol_comment=None,  # type: str | None
     ):  # type: (...) -> None
         """Write a line of instruction code.
 
@@ -1306,10 +1344,8 @@ class BaseFileWriter(object):
             addr (ghidra.program.model.address.Address, optional):
                 The address of the instruction.
 
-            instruction_bytes (list of str, optional):
+            rom_bytes (list of int, optional):
                 The list of bytes that make up the instruction and operands.
-
-                This is currently unused.
 
             eol_comment (str, optional):
                 The optional commemnt to add to the end of the line.
@@ -1318,6 +1354,7 @@ class BaseFileWriter(object):
             self.process_line(self.format_code(code)),
             addr=addr,
             eol_comment=eol_comment,
+            rom_bytes=rom_bytes,
         )
 
     def write_equs(
@@ -1439,8 +1476,9 @@ class BaseFileWriter(object):
 
     def format_line(
         self,
-        line,  # type: str
-        addr,  # type: Address | None
+        line,            # type: str
+        addr,            # type: Address | None
+        rom_bytes=None,  # type: list[int] | None
     ):  # type: (...) -> str
         """Return a formatted representation of an arbitrary line.
 
@@ -1450,6 +1488,9 @@ class BaseFileWriter(object):
 
             addr (ghidra.program.model.address.Address, optional):
                 The address of the line.
+
+            rom_bytes (list of int, optional):
+                The bytes in the ROM representing the line.
 
         Returns:
             str:
@@ -1563,9 +1604,10 @@ class TextFileWriter(BaseFileWriter):
 
     def write_line_with_eol_comment(
         self,
-        line,         # type: str
-        addr,         # type: Address
-        eol_comment,  # type: str | None
+        line,            # type: str
+        addr,            # type: Address
+        eol_comment,     # type: str | None
+        rom_bytes=None,  # type: list[int] | None
     ):  # type: (...) -> None
         """Write a line with an end-of-line comment.
 
@@ -1580,6 +1622,9 @@ class TextFileWriter(BaseFileWriter):
 
             eol_comment (str):
                 The commemnt to add to the end of the line.
+
+            rom_bytes (list of int, optional):
+                The bytes in the ROM representing the line.
         """
         if eol_comment:
             padding = ' ' * max(1, self.COMMENT_COLUMN - len(line) - 1)
@@ -1594,10 +1639,14 @@ class TextFileWriter(BaseFileWriter):
                     subsequent_indent='%s; ' % (' ' * len(line_prefix)),
                     width=self.MAX_COMMENT_LINE_LEN,
                 ),
-                addr=addr)
+                addr=addr,
+            )
         else:
-            self.write_line(line,
-                            addr=addr)
+            self.write_line(
+                line,
+                addr=addr,
+                rom_bytes=rom_bytes,
+            )
 
     def write_comment_lines(
         self,
@@ -1633,8 +1682,9 @@ class TextFileWriter(BaseFileWriter):
 
     def format_line(
         self,
-        line,  # type: str
-        addr,  # type: Address | None
+        line,            # type: str
+        addr,            # type: Address | None
+        rom_bytes=None,  # type: list[int] | None
     ):  # type: (...) -> str
         """Return a formatted representation of an arbitrary line.
 
@@ -1644,6 +1694,9 @@ class TextFileWriter(BaseFileWriter):
 
             addr (ghidra.program.model.address.Address, optional):
                 The address of the line.
+
+            rom_bytes (list of int, optional):
+                The bytes in the ROM representing the line.
 
         Returns:
             str:
@@ -1801,9 +1854,10 @@ class HTMLFileWriter(BaseFileWriter):
         pre {
           display: grid;
           grid-template-columns: minmax(6ch, min-content)
+                                 minmax(10ch, min-content)
                                  minmax(70ch, max-content)
                                  1fr;
-          gap: 0 3em;
+          gap: 0 3ch;
           margin: 0;
           padding: 0;
         }
@@ -1824,6 +1878,13 @@ class HTMLFileWriter(BaseFileWriter):
           color: #9bdeff;
         }
 
+        .b {
+          color: #95956B;
+          grid-column: 2;
+          grid-row: 1;
+          text-wrap: wrap;
+        }
+
         .equs {
           display: grid;
           grid-template-columns: minmax(50ch, max-content) min-content auto;
@@ -1840,7 +1901,7 @@ class HTMLFileWriter(BaseFileWriter):
         .c,
         .cp,
         .equs {
-          grid-column: 2;
+          grid-column: 3;
         }
 
         .cp {
@@ -1856,11 +1917,13 @@ class HTMLFileWriter(BaseFileWriter):
         }
 
         .cd {
-          grid-column: 2 / 3;
+          grid-column: 3 / -1;
+          grid-row: 1;
         }
 
         .ce {
           grid-column: -1;
+          grid-row: 1;
           text-wrap: wrap;
           text-indent: 2ch hanging;
         }
@@ -1872,7 +1935,7 @@ class HTMLFileWriter(BaseFileWriter):
         .la,
         .lla {
           font-weight: bold;
-          grid-column: 2 / 3;
+          grid-column: 3 / -1;
         }
 
         .la,
@@ -1895,7 +1958,7 @@ class HTMLFileWriter(BaseFileWriter):
 
         .idx {
           display: grid;
-          grid-column: 2 / 3;
+          grid-column: 3 / -1;
           grid-template-columns: minmax(50ch, max-content) auto;
           gap: 0 1em;
         }
@@ -1987,11 +2050,43 @@ class HTMLFileWriter(BaseFileWriter):
 
         fp.write('<a name="%s"></a>' % self._escape(anchor))
 
+    def write_code(
+        self,
+        code,              # type: list[str]
+        addr,              # type: Address
+        rom_bytes=None,    # type: list[int] | None
+        eol_comment=None,  # type: str | None
+    ):  # type: (...) -> None
+        """Write a line of instruction code.
+
+        The code will be formatted and processed before being written.
+
+        Args:
+            code (list of str):
+                The instruction and operands to format and write.
+
+            addr (ghidra.program.model.address.Address, optional):
+                The address of the instruction.
+
+            rom_bytes (list of int, optional):
+                The list of bytes that make up the instruction and operands.
+
+            eol_comment (str, optional):
+                The optional commemnt to add to the end of the line.
+        """
+        self.write_line_with_eol_comment(
+            self.process_line(self.format_code(code)),
+            addr=addr,
+            eol_comment=eol_comment,
+            rom_bytes=rom_bytes,
+        )
+
     def write_line_with_eol_comment(
         self,
-        line,         # type: str
-        addr,         # type: Address
-        eol_comment,  # type: str | None
+        line,            # type: str
+        addr,            # type: Address
+        eol_comment,     # type: str | None
+        rom_bytes=None,  # type: list[int] | None
     ):  # type: (...) -> None
         """Write a line with an end-of-line comment.
 
@@ -2004,6 +2099,9 @@ class HTMLFileWriter(BaseFileWriter):
 
             eol_comment (str):
                 The commemnt to add to the end of the line.
+
+            rom_bytes (list of int, optional):
+                The bytes in the ROM representing the line.
         """
         if eol_comment:
             self.write_line(
@@ -2012,10 +2110,15 @@ class HTMLFileWriter(BaseFileWriter):
                     .format(line=self._escape(line),
                             comment=self._escape(eol_comment))
                 ),
-                addr=addr)
+                addr=addr,
+                rom_bytes=rom_bytes,
+            )
         else:
-            self.write_line(line,
-                            addr=addr)
+            self.write_line(
+                line,
+                addr=addr,
+                rom_bytes=rom_bytes,
+            )
 
     def write_comment_lines(
         self,
@@ -2075,8 +2178,9 @@ class HTMLFileWriter(BaseFileWriter):
 
     def format_line(
         self,
-        line,  # type: str
-        addr,  # type: Address | None
+        line,            # type: str
+        addr,            # type: Address | None
+        rom_bytes=None,  # type: list[int] | None
     ):  # type: (...) -> str
         """Return a formatted representation of an arbitrary line.
 
@@ -2086,6 +2190,9 @@ class HTMLFileWriter(BaseFileWriter):
 
             addr (ghidra.program.model.address.Address, optional):
                 The address of the line.
+
+            rom_bytes (list of int, optional):
+                The bytes in the ROM representing the line.
 
         Returns:
             str:
@@ -2099,10 +2206,22 @@ class HTMLFileWriter(BaseFileWriter):
                 .format(addr=addr.toString(False))
             )
 
+        if rom_bytes is None:
+            rom_bytes_el = ''
+        else:
+            rom_bytes_el = (
+                '<span class="b">{rom_bytes}</span>'
+                .format(rom_bytes=' '.join(
+                    '%02x' % b
+                    for b in rom_bytes
+                ))
+            )
+
         return HTMLString(
-            '<span class="l">{anchor}{line}</span>\n'
+            '<span class="l">{anchor}{rom_bytes}{line}</span>\n'
             .format(anchor=anchor,
-                    line=self._escape(line))
+                    line=self._escape(line),
+                    rom_bytes=rom_bytes_el)
         )
 
     def format_code(
@@ -2547,10 +2666,10 @@ class BlockExporter:
         self.export_labels_and_comments(addr, writer, is_inner=True)
 
         # Generate the human-readable instruction.
-        instruction_bytes, code = self.generate_code(code_unit, addr, writer)
+        rom_bytes, code = self.generate_code(code_unit, addr, writer)
         writer.write_code(
             code=code,
-            instruction_bytes=instruction_bytes,
+            rom_bytes=rom_bytes,
             addr=addr,
             eol_comment=self.process_comment(
                 listing.getComment(CodeUnit.EOL_COMMENT, addr)),
@@ -2747,7 +2866,7 @@ class BlockExporter:
         code_unit,  # type: CodeUnit
         addr,       # type: Address
         writer,     # type: BaseFileWriter
-    ):  # type: (...) -> tuple[list[str], list[str]]
+    ):  # type: (...) -> tuple[list[int], list[str]]
         """Generate an instruction and operands for a code unit.
 
         Args:
@@ -2759,19 +2878,30 @@ class BlockExporter:
 
             writer (BaseFileWriter):
                 The writer to use for the export.
+
+        Returns:
+            tuple:
+            A 2-tuple of:
+
+            Tuple:
+                0 (list of bytes):
+                    The list of bytes making up the code line.
+
+                1 (list of str):
+                    The list of components for the instruction.
         """
         exporter = self.exporter
 
         # Generate raw bytes for the instructions.
-        raw_instruction_bytes = [
+        raw_rom_bytes = [
             b & 0xFF
             for b in code_unit.getBytes()
         ]
 
         # Format those for output.
-        instruction_bytes = [
+        rom_bytes = [
             '{:02x}'.format(b)
-            for b in raw_instruction_bytes
+            for b in raw_rom_bytes
         ]
 
         # Convert the instruction to a mnemonic and generate state for it.
@@ -2820,7 +2950,7 @@ class BlockExporter:
                 op_str = self.normalize_operand_addressing(default_op_rep)
 
             # Make sure Zero Page mode isn't used for these instructions.
-            if raw_instruction_bytes[0] in ABSOLUTE_ADDR_OPCODES:
+            if raw_rom_bytes[0] in ABSOLUTE_ADDR_OPCODES:
                 op_str = asm_mode.ABSOLUTE_ADDR_FMT % op_str
 
             operand_strings.append(op_str)
@@ -2828,7 +2958,7 @@ class BlockExporter:
         code = [mnemonic.ljust(3)]
         code += operand_strings
 
-        return instruction_bytes, code
+        return raw_rom_bytes, code
 
     def normalize_operand_addressing(
         self,
@@ -3277,7 +3407,7 @@ class BlockExporter:
                 The string representation of the data type.
 
             size (int):
-                The size of each value.
+                The size of each value in bytes.
 
             writer (BaseFileWriter):
                 The writer to export to.
@@ -3391,10 +3521,24 @@ class BlockExporter:
                     # Write the entry for the table.
                     assert code_op is not None
 
+                    if size == 1:
+                        rom_bytes = [value & 0xFF]
+                    elif size == 2:
+                        rom_bytes = [
+                            value & 0xFF,
+                            (value >> 8) & 0xFF,
+                        ]
+                    else:
+                        raise ValueError(
+                            'Unexpected data type size %s (value %s)'
+                            % (size, value)
+                        )
+
                     writer.write_code(
                         [code_op, dest_name],
                         addr=addr,
                         eol_comment=self.process_comment(eol_comment),
+                        rom_bytes=rom_bytes,
                     )
 
                     output_bytes = False
