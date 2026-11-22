@@ -1976,6 +1976,53 @@ class HTMLFileWriter(BaseFileWriter):
           color: #e3e3e3;
           margin-left: 1ch;
         }
+
+        @media only screen and (max-width: 800px) {
+          body, * {
+            font-size: 8pt;
+          }
+
+          pre {
+            grid-template-columns:
+              minmax(6ch, min-content)
+              minmax(40vw, min-content)
+              1fr;
+            gap: 0 1ch;
+          }
+
+          .b {
+            display: none;
+          }
+
+          .c,
+          .cp,
+          .equs {
+            grid-column: 1 / -1;
+            overflow: hidden;
+            text-wrap: wrap;
+          }
+
+          .cd {
+            grid-column: 2 / -2;
+          }
+
+          .ce {
+            word-wrap: anywhere;
+          }
+
+          .i {
+            margin-left: 2ch;
+          }
+
+          .lla {
+            margin-left: 0;
+          }
+
+          .o {
+            text-wrap: wrap;
+            word-wrap: anywhere;
+          }
+        }
     """)
 
     @contextmanager
@@ -2004,6 +2051,8 @@ class HTMLFileWriter(BaseFileWriter):
                 '  <title>{title}</title>\n'
                 '  <meta http-equiv="Content-Type"'
                 ' content="text/html; charset=utf-8">\n'
+                '  <meta name="viewport" content="width=device-width,'
+                ' initial-scale=1, maximum-scale=1">\n'
                 '  <style>\n'
                 '{css}\n'
                 '  </style>\n'
