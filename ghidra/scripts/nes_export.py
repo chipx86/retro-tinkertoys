@@ -123,7 +123,7 @@ ABSOLUTE_MATCH = re.compile(
 
 #: A regex matching placeholders for unresolved symbols in comments.
 SYMBOL_PLACEHOLDER_RE = re.compile(
-    r'{@sym(?:bol)?(?:_(?P<nibble>[ul]))? (?P<addr>.+?)}'
+    r'{@sym(?:bol)?(?:_(?P<nibble>[ul])(?P<offset>-1)?)? (?P<addr>.+?)}'
 )
 
 
@@ -1901,7 +1901,7 @@ class HTMLFileWriter(BaseFileWriter):
         .c,
         .cp,
         .equs {
-          grid-column: 3;
+          grid-column: -3;
         }
 
         .cp {
@@ -1917,7 +1917,7 @@ class HTMLFileWriter(BaseFileWriter):
         }
 
         .cd {
-          grid-column: 3 / -1;
+          grid-column: -3 / -1;
           grid-row: 1;
         }
 
@@ -1935,7 +1935,7 @@ class HTMLFileWriter(BaseFileWriter):
         .la,
         .lla {
           font-weight: bold;
-          grid-column: 3 / -1;
+          grid-column: -3 / -1;
         }
 
         .la,
@@ -1958,7 +1958,7 @@ class HTMLFileWriter(BaseFileWriter):
 
         .idx {
           display: grid;
-          grid-column: 3 / -1;
+          grid-column: -3 / -1;
           grid-template-columns: minmax(50ch, max-content) auto;
           gap: 0 1em;
         }
@@ -3616,6 +3616,7 @@ class BlockExporter:
         # which nibble is being references.
         marker_nibble = None    # type: str | None
         marker_addr_str = None  # type: str | None
+        marker_offset = None    # type: str | None
 
         comment = listing.getComment(CodeUnit.EOL_COMMENT,
                                      code_unit.getAddress())
@@ -3626,6 +3627,7 @@ class BlockExporter:
             if m and m.group('nibble'):
                 marker_nibble = m.group('nibble')
                 marker_addr_str = m.group('addr')
+                marker_offset = m.group('offset')
 
         op_str = None  # type: str | None
         default_op_rep = \
@@ -3663,6 +3665,7 @@ class BlockExporter:
                             code_unit=code_unit,
                             nibble=marker_nibble,
                             addr_str=marker_addr_str,
+                            offset=marker_offset,
                             scalar_value=scalar_value,
                         )
                     elif (abs(scalar_value) <= 0xFF and
@@ -3704,6 +3707,7 @@ class BlockExporter:
         code_unit,     # type: CodeUnit
         nibble,        # type: str
         addr_str,      # type: str
+        offset,        # type: str
         scalar_value,  # type: int
     ):  # type: (...) -> str
         """Return a symbolic high/low byte reference for an immediate operand.
@@ -3728,6 +3732,9 @@ class BlockExporter:
                 The address or symbol name from the marker, in ``<addr>``
                 or ``<block>::<addr>`` hex form (or using a symbol name).
 
+            offset (str):
+                The optional offset for the address.
+
             scalar_value (int):
                 The actual immediate operand value from the instruction.
 
@@ -3742,6 +3749,9 @@ class BlockExporter:
         target_value = self._resolve_marker_target_value(addr_str)
 
         if target_value is not None:
+            if offset:
+                target_value += int(offset)
+
             if nibble == 'u':
                 expected_value = (target_value >> 8) & 0xFF
             else:
@@ -3760,7 +3770,7 @@ class BlockExporter:
                        addr_str)
                 )
 
-        return '#%s%s' % (prefix, ref)
+        return '#%s%s%s' % (prefix, ref, offset or '')
 
     def _resolve_marker_target_value(
         self,
