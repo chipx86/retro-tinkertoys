@@ -3583,6 +3583,7 @@ class BlockExporter:
                             % (size, value)
                         )
 
+                    bytes_writer.flush()
                     writer.write_code(
                         [code_op, dest_name],
                         addr=addr,
